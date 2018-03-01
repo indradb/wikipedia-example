@@ -35,10 +35,8 @@ class HomeHandler(RequestHandler):
         if not article_id:
             raise HTTPError(404)
 
-        # Get the vertex/edge data from IndraDB. Everything except for the
-        # article name metadata is fetched in a transaction for better
-        # performance. We get article name metadata separately, because we need
-        # to fetch the related vertex IDs first.
+        # Get all of the data we want from IndraDB in a single
+        # request/transaction
         vertex_query = indradb.VertexQuery.vertices([article_id])
         trans.get_vertices(vertex_query)
         trans.get_edge_count(article_id, None, "outbound")
