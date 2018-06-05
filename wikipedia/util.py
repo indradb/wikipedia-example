@@ -1,7 +1,7 @@
 import itertools
 
 # Maximum number of items to return per chunk in `grouper`
-MAX_CHUNK_SIZE = 50000
+MAX_CHUNK_SIZE = 5000
 
 def grouper(iterable):
     """Via http://stackoverflow.com/a/8991553"""

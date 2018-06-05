@@ -8,29 +8,29 @@ import subprocess
 from contextlib import contextmanager
 
 @contextmanager
-def server():
+def _http_server(process, url):
     """
-    Context manager for running the server. This starts the server up, waits
+    Context manager for running an HTTP server. This starts the process, waits
     until its responsive, then yields. When the context manager's execution is
-    resumed, it kills the server.
+    resumed, it kills the process.
     """
 
     # Start the process
-    server_proc = subprocess.Popen(["indradb-server"], stdout=sys.stdout, stderr=sys.stderr)
+    proc = subprocess.Popen(process, stdout=sys.stdout, stderr=sys.stderr)
     
     while True:
         # Check if the server is now responding to HTTP requests
         try:
-            res = requests.get("http://localhost:8000", timeout=1)
+            res = requests.get(url, timeout=1)
 
-            if res.status_code == 404:
+            if res.status_code == 200 or res.status_code == 404:
                 break
         except requests.exceptions.RequestException:
             pass
 
         # Server is not yet responding to HTTP requests - let's make sure it's
         # running in the first place
-        if server_proc.poll() != None:
+        if proc.poll() != None:
             raise Exception("Server failed to start")
 
         time.sleep(1)
@@ -38,4 +38,13 @@ def server():
     try:
         yield
     finally:
-        server_proc.terminate()
+        proc.terminate()
+
+
+def server():
+    """Starts the IndraDB server"""
+    return _http_server("indradb-server", "http://localhost:8000")
+
+def dashboard():
+    """Starts the IndraDB dashboard"""
+    return _http_server("indradb-dashboard", "http://localhost:27615")
