@@ -118,7 +118,7 @@ def insert_articles(client, article_names_to_ids, links_chunk):
     trans = indradb.Transaction()
 
     for _ in new_article_names:
-        trans.create_vertex(type="article")
+        trans.create_vertex_from_type(type="article")
 
     new_article_names_mapping = list(zip(new_article_names, client.transaction(trans)))
 
