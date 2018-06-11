@@ -56,15 +56,14 @@ class HomeHandler(RequestHandler):
 
 def main():
     with wikipedia.server():
-        with wikipedia.dashboard():
-            app = Application([
-                (r"/", HomeHandler),
-            ], **{
-                "template_path": TEMPLATE_DIR
-            })
+        app = Application([
+            (r"/", HomeHandler),
+        ], **{
+            "template_path": TEMPLATE_DIR
+        })
 
-            app.listen(8080)
-            IOLoop.current().start()
+        app.listen(8080)
+        IOLoop.current().start()
 
 if __name__ == "__main__":
     main()

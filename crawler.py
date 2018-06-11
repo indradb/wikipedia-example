@@ -114,17 +114,8 @@ def insert_articles(article_names_to_ids, links_chunk):
 
     # Create the articles in IndraDB, and get a mapping of article names to
     # their vertex IDs
-<<<<<<< HEAD
     new_article_ids = wikipedia.create_vertices("article", len(new_article_names))
     new_article_names_mapping = list(zip(new_article_ids, new_article_names))
-=======
-    trans = indradb.Transaction()
-
-    for _ in new_article_names:
-        trans.create_vertex_from_type(type="article")
-
-    new_article_names_mapping = list(zip(new_article_names, client.transaction(trans)))
->>>>>>> master
 
     # Set the metadata on the vertices
     wikipedia.set_vertex_metadatas("name", new_article_names_mapping)
