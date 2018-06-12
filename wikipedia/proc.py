@@ -16,7 +16,7 @@ def server():
     """
 
     # Start the process
-    server_proc = subprocess.Popen(["indradb-server"], stdout=sys.stdout, stderr=sys.stderr)
+    server_proc = subprocess.Popen(["indradb"], stdout=sys.stdout, stderr=sys.stderr)
     
     while True:
         # Check if the server is now responding to HTTP requests
