@@ -131,11 +131,10 @@ def insert_links(article_names_to_ids, links):
     From a batch of links, this inserts all of the links into briad
     """
 
-    for chunk in wikipedia.grouper(links):
-        wikipedia.create_edges("link", [(
-            article_names_to_ids[from_article_name],
-            article_names_to_ids[to_article_name]
-        ) for (from_article_name, to_article_name) in chunk])
+    wikipedia.create_edges("link", [(
+        article_names_to_ids[from_article_name],
+        article_names_to_ids[to_article_name]
+    ) for (from_article_name, to_article_name) in links])
 
     return len(links)
 

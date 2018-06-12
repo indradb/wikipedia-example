@@ -26,6 +26,9 @@ class Mutation:
         self.calls.append((field, local_variables))
 
     def request(self):
+        if len(self.calls) == 0:
+            return []
+
         calls = []
         variables = {v.name: v.value for v in self.global_variables}
         variable_types = {v.name: v.type for v in self.global_variables}
@@ -44,7 +47,6 @@ class Mutation:
         query = """mutation %s(%s) {
             %s
         }""" % (self.name, query_typedefs, query_body)
-
         payload = dict(query=query, variables=variables)
         response = requests.post(ENDPOINT, data=json.dumps(payload), headers=REQUEST_HEADERS)
         data = response.json()["data"]
