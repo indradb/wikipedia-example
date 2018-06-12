@@ -10,10 +10,14 @@ Once completed, the wikipedia dataset will be explorable from briad.
 
 import bz2
 from xml.etree import ElementTree
+import os
 import re
 import sys
+import time
 import pickle
 import wikipedia
+
+PROGRESS_BAR_LENGTH = 40
 
 # Pattern for finding internal links in wikitext
 WIKI_LINK_PATTERN = re.compile(r"\[\[([^\[\]|]+)(|[\]]+)?\]\]")
@@ -45,6 +49,8 @@ ARTICLE_NAME_PREFIX_BLACKLIST = [
     "User:",
 ]
 
+ERASE_LINE = '\x1b[2K'
+
 class ByteStreamer(object):
     """Streams decompressed bytes"""
 
@@ -52,15 +58,16 @@ class ByteStreamer(object):
         self.path = path
         self.f = open(path, "rb")
         self.decompressor = bz2.BZ2Decompressor()
+        self.read_bytes = 0
 
     def read(self, size):
         compressed_bytes = self.f.read(BYTE_STREAMER_BUFFER_SIZE)
+        self.read_bytes += BYTE_STREAMER_BUFFER_SIZE
         return self.decompressor.decompress(compressed_bytes)
 
-def iterate_page_links(path):
+def iterate_page_links(streamer):
     """Parses a stream of XML, and yields the article links"""
 
-    streamer = ByteStreamer(path)
     title = None
     content = None
     blacklisted = False
@@ -124,8 +131,6 @@ def insert_articles(article_names_to_ids, links_chunk):
     for (article_id, article_name) in new_article_names_mapping:
         article_names_to_ids[article_name] = article_id
 
-    return len(new_article_names)
-
 def insert_links(article_names_to_ids, links):
     """
     From a batch of links, this inserts all of the links into briad
@@ -136,19 +141,32 @@ def insert_links(article_names_to_ids, links):
         article_names_to_ids[to_article_name]
     ) for (from_article_name, to_article_name) in links])
 
-    return len(links)
+def progress(count, total, status=""):
+    filled_len = int(round(PROGRESS_BAR_LENGTH * count / float(total)))
+    percent = round(100.0 * count / float(total), 1)
+    bar = "#" * filled_len + " " * (PROGRESS_BAR_LENGTH - filled_len)
+    sys.stdout.write(ERASE_LINE)
+    sys.stdout.write("[{}] {}% | {:.0f}/{:.0f} | {}\r".format(bar, percent, count, total, status))
+    sys.stdout.flush()
 
 def main(archive_path):
     """Parses article links and stores results in a `shelve` database"""
 
     article_names_to_ids = {}
+    start_time = time.time()
+    archive_size_mb = os.stat(archive_path).st_size / 1024 / 1024
 
     with wikipedia.server():
-        for links_chunk in wikipedia.grouper(iterate_page_links(archive_path)):
-            num_articles_inserted = insert_articles(article_names_to_ids, links_chunk)
-            print("%s articles inserted" % num_articles_inserted)
-            num_links_inserted = insert_links(article_names_to_ids, links_chunk)
-            print("%s links inserted" % num_links_inserted)
+        streamer = ByteStreamer(archive_path)
+
+        # Now insert the articles and links iteratively
+        for links_chunk in wikipedia.grouper(iterate_page_links(streamer)):
+            insert_articles(article_names_to_ids, links_chunk)
+            insert_links(article_names_to_ids, links_chunk)
+            cur_time = time.time()
+            mb_processed = streamer.read_bytes / 1024 / 1024
+            mbps = mb_processed / (cur_time - start_time)
+            progress(mb_processed, archive_size_mb, status="{:.2f} mbps".format(mbps))
 
     with open("data/article_names_to_ids.pickle", "wb") as f:
         pickle.dump(article_names_to_ids, f, pickle.HIGHEST_PROTOCOL)

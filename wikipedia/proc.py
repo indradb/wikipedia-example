@@ -43,7 +43,7 @@ def _http_server(process, url):
 
 def server():
     """Starts the IndraDB server"""
-    return _http_server("indradb-server", "http://localhost:8000")
+    return _http_server("indradb", "http://localhost:8000")
 
 def dashboard():
     """Starts the IndraDB dashboard"""
