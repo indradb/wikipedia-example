@@ -59,15 +59,16 @@ class ByteStreamer(object):
         self.path = path
         self.f = open(path, "rb")
         self.decompressor = bz2.BZ2Decompressor()
+        self.read_bytes = 0
 
     def read(self, size):
         compressed_bytes = self.f.read(BYTE_STREAMER_BUFFER_SIZE)
+        self.read_bytes += BYTE_STREAMER_BUFFER_SIZE
         return self.decompressor.decompress(compressed_bytes)
 
-def iterate_page_links(path):
+def iterate_page_links(streamer):
     """Parses a stream of XML, and yields the article links"""
 
-    streamer = ByteStreamer(path)
     title = None
     content = None
     blacklisted = False
@@ -174,13 +175,14 @@ def main(archive_path):
 
     with wikipedia.server():
         client = wikipedia.get_client()
+        streamer = ByteStreamer(archive_path)
 
         # Now insert the articles and links iteratively
-        for i, links_chunk in enumerate(wikipedia.grouper(iterate_page_links(archive_path))):
+        for links_chunk in wikipedia.grouper(iterate_page_links(streamer)):
             insert_articles(client, article_names_to_ids, links_chunk)
             insert_links(client, article_names_to_ids, links_chunk)
             cur_time = time.time()
-            mb_processed = (i + 1) * BYTE_STREAMER_BUFFER_SIZE / 1024 / 1024
+            mb_processed = streamer.read_bytes / 1024 / 1024
             mbps = mb_processed / (cur_time - start_time)
             progress(mb_processed, archive_size_mb, status="{:.2f} mbps".format(mbps))
 
