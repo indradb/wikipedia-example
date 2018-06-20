@@ -15,6 +15,8 @@ import re
 import sys
 import time
 import pickle
+
+import capnp
 import wikipedia
 import indradb
 
@@ -122,20 +124,23 @@ def insert_articles(client, article_names_to_ids, links_chunk):
 
     # Create the articles in IndraDB, and get a mapping of article names to
     # their vertex IDs
-    trans = indradb.Transaction()
+    trans = client.transaction()
+    promises = []
 
     for _ in new_article_names:
-        trans.create_vertex_from_type(type="article")
+        promises.append(trans.create_vertex_from_type(type="article"))
 
-    new_article_names_mapping = list(zip(new_article_names, client.transaction(trans)))
+    new_article_ids = capnp.join_promises(promises).wait()
+    new_article_names_mapping = list(zip(new_article_names, new_article_ids))
 
     # Set the metadata on the vertices
-    trans = indradb.Transaction()
+    trans = client.transaction()
+    promises = []
 
     for (article_name, article_id) in new_article_names_mapping:
-        trans.set_vertex_metadata(indradb.VertexQuery.vertices([article_id]), "name", article_name)
+        promises.append(trans.set_vertex_metadata(indradb.VertexQuery.vertices([article_id]), "name", article_name))
 
-    client.transaction(trans)
+    capnp.join_promises(promises).wait()
     
     # Update the in-memory mapping
     for (article_name, article_id) in new_article_names_mapping:
@@ -147,16 +152,19 @@ def insert_links(client, article_names_to_ids, links_chunk):
     """
 
     # Create the links in IndraDB in batches
-    trans = indradb.Transaction()
+    trans = client.transaction()
+    promises = []
 
     for (from_article_name, to_article_name) in links_chunk:
-        trans.create_edge(indradb.EdgeKey(
+        promise = trans.create_edge(indradb.EdgeKey(
             article_names_to_ids[from_article_name],
             "link",
             article_names_to_ids[to_article_name],
         ))
 
-    client.transaction(trans)
+        promises.append(promise)
+
+    capnp.join_promises(promises).wait()
 
 def progress(count, total, status=""):
     filled_len = int(round(PROGRESS_BAR_LENGTH * count / float(total)))

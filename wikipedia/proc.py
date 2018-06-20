@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 
-import requests
 import re
 import sys
 import time
+import socket
 import subprocess
 from contextlib import contextmanager
+
+from .client import get_client
 
 @contextmanager
 def server():
@@ -19,16 +21,15 @@ def server():
     server_proc = subprocess.Popen(["indradb"], stdout=sys.stdout, stderr=sys.stderr)
     
     while True:
-        # Check if the server is now responding to HTTP requests
         try:
-            res = requests.get("http://localhost:8000", timeout=1)
-
-            if res.status_code == 404:
+            client = get_client()
+            
+            if client.ping().wait().ready:
                 break
-        except requests.exceptions.RequestException:
-            pass
+        except socket.error as e:
+            print(e)
 
-        # Server is not yet responding to HTTP requests - let's make sure it's
+        # Server is not yet responding to requests - let's make sure it's
         # running in the first place
         if server_proc.poll() != None:
             raise Exception("Server failed to start")
@@ -39,3 +40,4 @@ def server():
         yield
     finally:
         server_proc.terminate()
+

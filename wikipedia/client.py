@@ -1,10 +1,7 @@
 import indradb
 
 # Location of the IndraDB server
-HOST_CONFIG = ("localhost", 8000)
-
-# How long in seconds before an IndraDB request times out
-REQUEST_TIMEOUT = 600
+HOST_CONFIG = "localhost:27615"
 
 def get_client():
-    return indradb.Client(HOST_CONFIG, request_timeout=REQUEST_TIMEOUT, scheme="http")
+    return indradb.Client(HOST_CONFIG)
