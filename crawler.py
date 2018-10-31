@@ -133,12 +133,11 @@ def insert_articles(client, article_names_to_ids, links_chunk):
     new_article_ids = capnp.join_promises(promises).wait()
     new_article_names_mapping = list(zip(new_article_names, new_article_ids))
 
-    # Set the metadata on the vertices
-    trans = client.transaction()
+    # Set the properties on the vertices
     promises = []
 
     for (article_name, article_id) in new_article_names_mapping:
-        promises.append(trans.set_vertex_metadata(indradb.VertexQuery.vertices([article_id]), "name", article_name))
+        promises.append(trans.set_vertex_properties(indradb.VertexQuery.vertices([article_id]), "name", article_name))
 
     capnp.join_promises(promises).wait()
     
@@ -166,12 +165,12 @@ def insert_links(client, article_names_to_ids, links_chunk):
 
     capnp.join_promises(promises).wait()
 
-def progress(count, total, status=""):
+def progress(count, total):
     filled_len = int(round(PROGRESS_BAR_LENGTH * count / float(total)))
     percent = round(100.0 * count / float(total), 1)
     bar = "#" * filled_len + " " * (PROGRESS_BAR_LENGTH - filled_len)
     sys.stdout.write(ERASE_LINE)
-    sys.stdout.write("[{}] {}% | {:.0f}/{:.0f} | {}\r".format(bar, percent, count, total, status))
+    sys.stdout.write("[{}] {}% | {:.0f}/{:.0f}\r".format(bar, percent, count, total))
     sys.stdout.flush()
 
 def main(archive_path):
@@ -191,8 +190,7 @@ def main(archive_path):
             insert_links(client, article_names_to_ids, links_chunk)
             cur_time = time.time()
             mb_processed = streamer.read_bytes / 1024 / 1024
-            mbps = mb_processed / (cur_time - start_time)
-            progress(mb_processed, archive_size_mb, status="{:.2f} mbps".format(mbps))
+            progress(mb_processed, archive_size_mb)
 
     with open("data/article_names_to_ids.pickle", "wb") as f:
         pickle.dump(article_names_to_ids, f, pickle.HIGHEST_PROTOCOL)

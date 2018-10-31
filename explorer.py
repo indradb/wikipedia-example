@@ -41,12 +41,12 @@ class HomeHandler(RequestHandler):
         trans.get_vertices(vertex_query)
         trans.get_edge_count(article_id, None, "outbound")
         trans.get_edges(vertex_query.outbound_edges("link", limit=1000))
-        trans.get_vertex_metadata(vertex_query.outbound_edges("link", limit=1000).inbound_vertices(), "name")
-        trans.get_vertex_metadata(vertex_query, "eigenvector-centrality")
+        trans.get_vertex_properties(vertex_query.outbound_edges("link", limit=1000).inbound_vertices(), "name")
+        trans.get_vertex_properties(vertex_query, "eigenvector-centrality")
         client = wikipedia.get_client()
         [vertex_data, edge_count, edge_data, name_data, centrality_data] = client.transaction(trans)
         inbound_edge_ids = [e.key.inbound_id for e in edge_data]
-        inbound_edge_names = {metadata.id: metadata.value for metadata in name_data}
+        inbound_edge_names = {p.id: p.value for p in name_data}
         centrality = centrality_data[0].value if len(centrality_data) > 0 else None
         
         self.render(
