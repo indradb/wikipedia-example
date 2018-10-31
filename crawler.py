@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import time
+import uuid
 import pickle
 
 import capnp
@@ -108,62 +109,60 @@ def iterate_page_links(streamer):
     except EOFError:
         pass
 
-def insert_articles(client, article_names_to_ids, links_chunk):
-    """
-    From a batch of links, this finds all the unique articles, inserts them
-    into IndraDB.
-    """
-    new_article_names = set([])
+class Inserter:
+    def __init__(self, client):
+        self.client = client
+        self.article_names_to_ids = {}
 
-    # Find all of the unique article names that haven't been inserted before
-    for (from_article_name, to_article_name) in links_chunk:
-        if from_article_name not in article_names_to_ids:
-            new_article_names.add(from_article_name)
-        if to_article_name not in article_names_to_ids:
-            new_article_names.add(to_article_name)
+    def articles(self, links_chunk):
+        """
+        From a batch of links, this finds all the unique articles, inserts
+        them into IndraDB.
+        """
+        new_article_names = set([])
 
-    # Create the articles in IndraDB, and get a mapping of article names to
-    # their vertex IDs
-    trans = client.transaction()
-    promises = []
+        # Find all of the unique article names that haven't been inserted before
+        for (from_article_name, to_article_name) in links_chunk:
+            if from_article_name not in self.article_names_to_ids:
+                new_article_names.add(from_article_name)
+            if to_article_name not in self.article_names_to_ids:
+                new_article_names.add(to_article_name)
 
-    for _ in new_article_names:
-        promises.append(trans.create_vertex_from_type(type="article"))
+        # Create the articles in IndraDB
+        trans = self.client.transaction()
+        promises = []
 
-    new_article_ids = capnp.join_promises(promises).wait()
-    new_article_names_mapping = list(zip(new_article_names, new_article_ids))
+        for article_name in new_article_names:
+            vertex_id = uuid.uuid1()
+            vertex = indradb.Vertex(vertex_id, "article")
+            promises.append(trans.create_vertex(vertex))
+            query = indradb.VertexQuery.vertices([vertex_id])
+            promises.append(trans.set_vertex_properties(query, "name", article_name))
+            self.article_names_to_ids[article_name] = vertex_id
 
-    # Set the properties on the vertices
-    promises = []
+        return capnp.join_promises(promises)
 
-    for (article_name, article_id) in new_article_names_mapping:
-        promises.append(trans.set_vertex_properties(indradb.VertexQuery.vertices([article_id]), "name", article_name))
+    def links(self, links_chunk):
+        """
+        From a batch of links, this inserts all of the links into IndraDB.
+        """
 
-    capnp.join_promises(promises).wait()
-    
-    # Update the in-memory mapping
-    for (article_name, article_id) in new_article_names_mapping:
-        article_names_to_ids[article_name] = article_id
+        trans = self.client.transaction()
+        promises = []
 
-def insert_links(client, article_names_to_ids, links_chunk):
-    """
-    From a batch of links, this inserts all of the links into briad
-    """
+        for (from_article_name, to_article_name) in links_chunk:
+            promise = trans.create_edge(indradb.EdgeKey(
+                self.article_names_to_ids[from_article_name],
+                "link",
+                self.article_names_to_ids[to_article_name],
+            ))
 
-    # Create the links in IndraDB in batches
-    trans = client.transaction()
-    promises = []
+            promises.append(promise)
 
-    for (from_article_name, to_article_name) in links_chunk:
-        promise = trans.create_edge(indradb.EdgeKey(
-            article_names_to_ids[from_article_name],
-            "link",
-            article_names_to_ids[to_article_name],
-        ))
+        return capnp.join_promises(promises)
 
-        promises.append(promise)
-
-    capnp.join_promises(promises).wait()
+    def dump(self, f):
+        pickle.dump(self.article_names_to_ids, f, pickle.HIGHEST_PROTOCOL)
 
 def progress(count, total):
     filled_len = int(round(PROGRESS_BAR_LENGTH * count / float(total)))
@@ -174,26 +173,23 @@ def progress(count, total):
     sys.stdout.flush()
 
 def main(archive_path):
-    """Parses article links and stores results in a `shelve` database"""
-
-    article_names_to_ids = {}
     start_time = time.time()
     archive_size_mb = os.stat(archive_path).st_size / 1024 / 1024
 
     with wikipedia.server():
-        client = wikipedia.get_client()
+        inserter = Inserter(wikipedia.get_client())
         streamer = ByteStreamer(archive_path)
 
         # Now insert the articles and links iteratively
         for links_chunk in wikipedia.grouper(iterate_page_links(streamer)):
-            insert_articles(client, article_names_to_ids, links_chunk)
-            insert_links(client, article_names_to_ids, links_chunk)
+            inserter.articles(links_chunk).wait()
+            inserter.links(links_chunk).wait()
             cur_time = time.time()
             mb_processed = streamer.read_bytes / 1024 / 1024
             progress(mb_processed, archive_size_mb)
 
-    with open("data/article_names_to_ids.pickle", "wb") as f:
-        pickle.dump(article_names_to_ids, f, pickle.HIGHEST_PROTOCOL)
+        with open("data/article_names_to_ids.pickle", "wb") as f:
+            inserter.dump(f)
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:
