@@ -169,6 +169,7 @@ def progress(count, total):
     sys.stdout.flush()
 
 def main(archive_path):
+    last_promise = capnp.join_promises([]) # Create an empty promise
     start_time = time.time()
     archive_size_mb = os.stat(archive_path).st_size / 1024 / 1024
 
@@ -178,11 +179,16 @@ def main(archive_path):
 
         # Now insert the articles and links iteratively
         for links_chunk in wikipedia.grouper(iterate_page_links(streamer)):
+            last_promise.wait()
             inserter.articles(links_chunk).wait()
-            inserter.links(links_chunk).wait()
+            last_promise = inserter.links(links_chunk)
             cur_time = time.time()
             mb_processed = streamer.read_bytes / 1024 / 1024
             progress(mb_processed, archive_size_mb)
+
+        last_promise.wait()
+
+        print("\nDumping results...")
 
         with open("data/article_names_to_ids.pickle", "wb") as f:
             inserter.dump(f)
