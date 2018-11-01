@@ -129,37 +129,33 @@ class Inserter:
                 new_article_names.add(to_article_name)
 
         # Create the articles in IndraDB
-        trans = self.client.transaction()
-        promises = []
+        items = []
 
         for article_name in new_article_names:
             vertex_id = uuid.uuid1()
-            vertex = indradb.Vertex(vertex_id, "article")
-            promises.append(trans.create_vertex(vertex))
-            query = indradb.VertexQuery.vertices([vertex_id])
-            promises.append(trans.set_vertex_properties(query, "name", article_name))
+            items.append(indradb.BulkInsertItem.vertex(indradb.Vertex(vertex_id, "article")))
+            items.append(indradb.BulkInsertItem.vertex_property(vertex_id, "name", article_name))
             self.article_names_to_ids[article_name] = vertex_id
 
-        return capnp.join_promises(promises)
+        return self.client.bulk_insert(items)
 
     def links(self, links_chunk):
         """
         From a batch of links, this inserts all of the links into IndraDB.
         """
 
-        trans = self.client.transaction()
-        promises = []
+        items = []
 
         for (from_article_name, to_article_name) in links_chunk:
-            promise = trans.create_edge(indradb.EdgeKey(
+            edge_key = indradb.EdgeKey(
                 self.article_names_to_ids[from_article_name],
                 "link",
                 self.article_names_to_ids[to_article_name],
-            ))
+            )
 
-            promises.append(promise)
+            items.append(indradb.BulkInsertItem.edge(edge_key))
 
-        return capnp.join_promises(promises)
+        return self.client.bulk_insert(items)
 
     def dump(self, f):
         pickle.dump(self.article_names_to_ids, f, pickle.HIGHEST_PROTOCOL)
