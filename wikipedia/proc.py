@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import os
 import re
 import sys
 import time
@@ -10,7 +11,7 @@ from contextlib import contextmanager
 from .client import get_client
 
 @contextmanager
-def server():
+def server(bulk_load_optimized=False):
     """
     Context manager for running the server. This starts the server up, waits
     until its responsive, then yields. When the context manager's execution is
@@ -18,7 +19,12 @@ def server():
     """
 
     # Start the process
-    server_proc = subprocess.Popen(["indradb"], stdout=sys.stdout, stderr=sys.stderr)
+    env = dict(os.environ)
+
+    if bulk_load_optimized:
+        env["ROCKSDB_BULK_LOAD_OPTIMIZED"] = "true"
+
+    server_proc = subprocess.Popen(["indradb"], stdout=sys.stdout, stderr=sys.stderr, env=env)
     
     while True:
         try:

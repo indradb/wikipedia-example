@@ -21,7 +21,7 @@ import capnp
 import wikipedia
 import indradb
 
-PROGRESS_BAR_LENGTH = 40
+PROGRESS_BAR_LENGTH = 55
 
 # Pattern for finding internal links in wikitext
 WIKI_LINK_PATTERN = re.compile(r"\[\[([^\[\]|]+)(|[\]]+)?\]\]")
@@ -173,9 +173,10 @@ def main(archive_path):
     start_time = time.time()
     archive_size_mb = os.stat(archive_path).st_size / 1024 / 1024
 
-    with wikipedia.server():
+    with wikipedia.server(bulk_load_optimized=True):
         inserter = Inserter(wikipedia.get_client())
         streamer = ByteStreamer(archive_path)
+        print("Decompressing and indexing content...")
 
         # Now insert the articles and links iteratively
         for links_chunk in wikipedia.grouper(iterate_page_links(streamer)):
@@ -192,6 +193,8 @@ def main(archive_path):
 
         with open("data/article_names_to_ids.pickle", "wb") as f:
             inserter.dump(f)
+
+        print("Done!")
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:
