@@ -6,9 +6,12 @@ from tornado.web import Application, RequestHandler, HTTPError
 from tornado.httpclient import HTTPClient
 import indradb
 import shelve
+import capnp
 
 # Location of the templates
 TEMPLATE_DIR = "./templates"
+
+EDGE_LIMIT = 1000
 
 class HomeHandler(RequestHandler):
     def initialize(self, client, db):
@@ -33,11 +36,16 @@ class HomeHandler(RequestHandler):
         # request/transaction
         vertex_query = indradb.VertexQuery.vertices([article_id])
         trans = self.client.transaction()
-        vertex_data = trans.get_vertices(vertex_query).wait()
-        edge_count = trans.get_edge_count(article_id, None, "outbound").wait()
-        edge_data = trans.get_edges(vertex_query.outbound_edges("link", limit=1000)).wait()
-        name_data = trans.get_vertex_properties(vertex_query.outbound_edges("link", limit=1000).inbound_vertices(), "name").wait()
-        centrality_data = trans.get_vertex_properties(vertex_query, "eigenvector-centrality").wait()
+
+        vertex_data, edge_count, edge_data, centrality_data = capnp.join_promises([
+            trans.get_vertices(vertex_query),
+            trans.get_edge_count(article_id, None, "outbound"),
+            trans.get_edges(vertex_query.outbound_edges(EDGE_LIMIT, type_filter="link")),
+            trans.get_vertex_properties(vertex_query, "eigenvector-centrality"),
+        ]).wait()
+
+        name_data = trans.get_vertex_properties(indradb.EdgeQuery.edges([e.key for e in edge_data]).inbound_vertices(EDGE_LIMIT), "name").wait()
+        
         inbound_edge_ids = [e.key.inbound_id for e in edge_data]
         inbound_edge_names = {p.id: p.value for p in name_data}
         centrality = centrality_data[0].value if len(centrality_data) > 0 else None
