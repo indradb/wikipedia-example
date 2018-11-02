@@ -16,6 +16,7 @@ import sys
 import time
 import uuid
 import pickle
+import shelve
 
 import capnp
 import wikipedia
@@ -157,9 +158,6 @@ class Inserter:
 
         return self.client.bulk_insert(items)
 
-    def dump(self, f):
-        pickle.dump(self.article_names_to_ids, f, pickle.HIGHEST_PROTOCOL)
-
 def progress(count, total):
     filled_len = int(round(PROGRESS_BAR_LENGTH * count / float(total)))
     percent = round(100.0 * count / float(total), 1)
@@ -173,8 +171,8 @@ def main(archive_path):
     start_time = time.time()
     archive_size_mb = os.stat(archive_path).st_size / 1024 / 1024
 
-    with wikipedia.server(bulk_load_optimized=True):
-        inserter = Inserter(wikipedia.get_client())
+    with wikipedia.server(bulk_load_optimized=True) as client:
+        inserter = Inserter(client)
         streamer = ByteStreamer(archive_path)
         print("Decompressing and indexing content...")
 
@@ -191,8 +189,8 @@ def main(archive_path):
 
         print("\nDumping results...")
 
-        with open("data/article_names_to_ids.pickle", "wb") as f:
-            inserter.dump(f)
+        with shelve.open("data/article_names_to_ids.shelve") as persisted_article_names_to_ids:
+            persisted_article_names_to_ids.update(inserter.article_names_to_ids)
 
         print("Done!")
 

@@ -8,7 +8,9 @@ import socket
 import subprocess
 from contextlib import contextmanager
 
-from .client import get_client
+import indradb
+
+HOST_CONFIG = "localhost:27615"
 
 @contextmanager
 def server(bulk_load_optimized=False):
@@ -28,10 +30,12 @@ def server(bulk_load_optimized=False):
     
     while True:
         try:
-            client = get_client()
-            
+            client = indradb.Client(HOST_CONFIG)
+
             if client.ping().wait().ready:
                 break
+        except ConnectionRefusedError as e:
+            print(e)
         except socket.error as e:
             print(e)
 
@@ -43,7 +47,6 @@ def server(bulk_load_optimized=False):
         time.sleep(1)
 
     try:
-        yield
+        yield client
     finally:
         server_proc.terminate()
-
