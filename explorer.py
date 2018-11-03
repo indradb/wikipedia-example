@@ -5,19 +5,18 @@ from tornado.ioloop import IOLoop
 from tornado.web import Application, RequestHandler, HTTPError
 from tornado.httpclient import HTTPClient
 import indradb
-import pickle
+import shelve
+import capnp
 
 # Location of the templates
 TEMPLATE_DIR = "./templates"
 
-class HomeHandler(RequestHandler):
-    @classmethod
-    def db(cls):
-        if not hasattr(cls, "_db"):
-            with open("data/article_names_to_ids.pickle", "rb") as f:
-                cls._db = pickle.load(f)
+EDGE_LIMIT = 1000
 
-        return cls._db
+class HomeHandler(RequestHandler):
+    def initialize(self, client, db):
+        self.client = client
+        self.db = db
 
     def get(self):
         if self.get_argument("action", None) == "get_article":
@@ -27,10 +26,8 @@ class HomeHandler(RequestHandler):
             self.get_main()
 
     def get_article(self, article_name):
-        trans = indradb.Transaction()
-
         # Get the ID of the article we want from its name
-        article_id = self.db()[article_name]
+        article_id = self.db[article_name]
 
         if not article_id:
             raise HTTPError(404)
@@ -38,17 +35,19 @@ class HomeHandler(RequestHandler):
         # Get all of the data we want from IndraDB in a single
         # request/transaction
         vertex_query = indradb.VertexQuery.vertices([article_id])
-        trans.get_vertices(vertex_query)
-        trans.get_edge_count(article_id, None, "outbound")
-        trans.get_edges(vertex_query.outbound_edges("link", limit=1000))
-        trans.get_vertex_metadata(vertex_query.outbound_edges("link", limit=1000).inbound_vertices(), "name")
-        trans.get_vertex_metadata(vertex_query, "eigenvector-centrality")
-        client = wikipedia.get_client()
-        [vertex_data, edge_count, edge_data, name_data, centrality_data] = client.transaction(trans)
-        inbound_edge_ids = [e.key.inbound_id for e in edge_data]
-        inbound_edge_names = {metadata.id: metadata.value for metadata in name_data}
-        centrality = centrality_data[0].value if len(centrality_data) > 0 else None
+        trans = self.client.transaction()
+
+        vertex_data, edge_count, edge_data = capnp.join_promises([
+            trans.get_vertices(vertex_query),
+            trans.get_edge_count(article_id, None, "outbound"),
+            trans.get_edges(vertex_query.outbound_edges(EDGE_LIMIT, type_filter="link")),
+        ]).wait()
+
+        name_data = trans.get_vertex_properties(indradb.EdgeQuery.edges([e.key for e in edge_data]).inbound_vertices(EDGE_LIMIT), "name").wait()
         
+        inbound_edge_ids = [e.key.inbound_id for e in edge_data]
+        inbound_edge_names = {p.id: p.value for p in name_data}
+
         self.render(
             "article.html",
             article_name=article_name,
@@ -57,22 +56,19 @@ class HomeHandler(RequestHandler):
             edge_count=edge_count,
             inbound_edge_ids=inbound_edge_ids,
             inbound_edge_names=inbound_edge_names,
-            centrality=centrality,
         )
 
     def get_main(self):
         self.render("main.html")
 
 def main():
-    with wikipedia.server():
-        app = Application([
-            (r"/", HomeHandler),
-        ], **{
-            "template_path": TEMPLATE_DIR
-        })
-
-        app.listen(8080)
-        IOLoop.current().start()
+    with wikipedia.server() as client:
+        with shelve.open("data/article_names_to_ids.shelve") as db:
+            handler_args = dict(client=client, db=db)
+            app_settings = dict(template_path=TEMPLATE_DIR)
+            app = Application([(r"/", HomeHandler, handler_args)], **app_settings)
+            app.listen(8080)
+            IOLoop.current().start()
 
 if __name__ == "__main__":
     main()

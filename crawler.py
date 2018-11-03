@@ -14,11 +14,15 @@ import os
 import re
 import sys
 import time
+import uuid
 import pickle
+import shelve
+
+import capnp
 import wikipedia
 import indradb
 
-PROGRESS_BAR_LENGTH = 40
+PROGRESS_BAR_LENGTH = 55
 
 # Pattern for finding internal links in wikitext
 WIKI_LINK_PATTERN = re.compile(r"\[\[([^\[\]|]+)(|[\]]+)?\]\]")
@@ -106,88 +110,89 @@ def iterate_page_links(streamer):
     except EOFError:
         pass
 
-def insert_articles(client, article_names_to_ids, links_chunk):
-    """
-    From a batch of links, this finds all the unique articles, inserts them
-    into IndraDB.
-    """
-    new_article_names = set([])
+class Inserter:
+    def __init__(self, client):
+        self.client = client
+        self.article_names_to_ids = {}
 
-    # Find all of the unique article names that haven't been inserted before
-    for (from_article_name, to_article_name) in links_chunk:
-        if from_article_name not in article_names_to_ids:
-            new_article_names.add(from_article_name)
-        if to_article_name not in article_names_to_ids:
-            new_article_names.add(to_article_name)
+    def articles(self, links_chunk):
+        """
+        From a batch of links, this finds all the unique articles, inserts
+        them into IndraDB.
+        """
+        new_article_names = set([])
 
-    # Create the articles in IndraDB, and get a mapping of article names to
-    # their vertex IDs
-    trans = indradb.Transaction()
+        # Find all of the unique article names that haven't been inserted before
+        for (from_article_name, to_article_name) in links_chunk:
+            if from_article_name not in self.article_names_to_ids:
+                new_article_names.add(from_article_name)
+            if to_article_name not in self.article_names_to_ids:
+                new_article_names.add(to_article_name)
 
-    for _ in new_article_names:
-        trans.create_vertex_from_type(type="article")
+        # Create the articles in IndraDB
+        items = []
 
-    new_article_names_mapping = list(zip(new_article_names, client.transaction(trans)))
+        for article_name in new_article_names:
+            vertex_id = uuid.uuid1()
+            items.append(indradb.BulkInsertItem.vertex(indradb.Vertex(vertex_id, "article")))
+            items.append(indradb.BulkInsertItem.vertex_property(vertex_id, "name", article_name))
+            self.article_names_to_ids[article_name] = vertex_id
 
-    # Set the metadata on the vertices
-    trans = indradb.Transaction()
+        return self.client.bulk_insert(items)
 
-    for (article_name, article_id) in new_article_names_mapping:
-        trans.set_vertex_metadata(indradb.VertexQuery.vertices([article_id]), "name", article_name)
+    def links(self, links_chunk):
+        """
+        From a batch of links, this inserts all of the links into IndraDB.
+        """
 
-    client.transaction(trans)
-    
-    # Update the in-memory mapping
-    for (article_name, article_id) in new_article_names_mapping:
-        article_names_to_ids[article_name] = article_id
+        items = []
 
-def insert_links(client, article_names_to_ids, links_chunk):
-    """
-    From a batch of links, this inserts all of the links into briad
-    """
+        for (from_article_name, to_article_name) in links_chunk:
+            edge_key = indradb.EdgeKey(
+                self.article_names_to_ids[from_article_name],
+                "link",
+                self.article_names_to_ids[to_article_name],
+            )
 
-    # Create the links in IndraDB in batches
-    trans = indradb.Transaction()
+            items.append(indradb.BulkInsertItem.edge(edge_key))
 
-    for (from_article_name, to_article_name) in links_chunk:
-        trans.create_edge(indradb.EdgeKey(
-            article_names_to_ids[from_article_name],
-            "link",
-            article_names_to_ids[to_article_name],
-        ))
+        return self.client.bulk_insert(items)
 
-    client.transaction(trans)
-
-def progress(count, total, status=""):
+def progress(count, total):
     filled_len = int(round(PROGRESS_BAR_LENGTH * count / float(total)))
     percent = round(100.0 * count / float(total), 1)
     bar = "#" * filled_len + " " * (PROGRESS_BAR_LENGTH - filled_len)
     sys.stdout.write(ERASE_LINE)
-    sys.stdout.write("[{}] {}% | {:.0f}/{:.0f} | {}\r".format(bar, percent, count, total, status))
+    sys.stdout.write("[{}] {}% | {:.0f}/{:.0f}\r".format(bar, percent, count, total))
     sys.stdout.flush()
 
 def main(archive_path):
-    """Parses article links and stores results in a `shelve` database"""
-
-    article_names_to_ids = {}
+    last_promise = capnp.join_promises([]) # Create an empty promise
     start_time = time.time()
     archive_size_mb = os.stat(archive_path).st_size / 1024 / 1024
 
-    with wikipedia.server():
-        client = wikipedia.get_client()
+    with wikipedia.server(bulk_load_optimized=True) as client:
+        inserter = Inserter(client)
         streamer = ByteStreamer(archive_path)
+        print("Decompressing and indexing content...")
 
         # Now insert the articles and links iteratively
         for links_chunk in wikipedia.grouper(iterate_page_links(streamer)):
-            insert_articles(client, article_names_to_ids, links_chunk)
-            insert_links(client, article_names_to_ids, links_chunk)
+            last_promise.wait()
+            inserter.articles(links_chunk).wait()
+            last_promise = inserter.links(links_chunk)
             cur_time = time.time()
             mb_processed = streamer.read_bytes / 1024 / 1024
-            mbps = mb_processed / (cur_time - start_time)
-            progress(mb_processed, archive_size_mb, status="{:.2f} mbps".format(mbps))
+            progress(mb_processed, archive_size_mb)
 
-    with open("data/article_names_to_ids.pickle", "wb") as f:
-        pickle.dump(article_names_to_ids, f, pickle.HIGHEST_PROTOCOL)
+        last_promise.wait()
+
+        print("\nDumping results...")
+
+        with shelve.open("data/article_names_to_ids.shelve") as persisted_article_names_to_ids:
+            persisted_article_names_to_ids.update(inserter.article_names_to_ids)
+
+        print("Done!")
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:

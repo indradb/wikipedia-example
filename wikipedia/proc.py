@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 
-import requests
+import os
 import re
 import sys
 import time
+import socket
 import subprocess
 from contextlib import contextmanager
 
+import indradb
+
+HOST_CONFIG = "localhost:27615"
+
 @contextmanager
-def server():
+def server(bulk_load_optimized=False):
     """
     Context manager for running the server. This starts the server up, waits
     until its responsive, then yields. When the context manager's execution is
@@ -16,19 +21,25 @@ def server():
     """
 
     # Start the process
-    server_proc = subprocess.Popen(["indradb"], stdout=sys.stdout, stderr=sys.stderr)
+    env = dict(os.environ)
+
+    if bulk_load_optimized:
+        env["ROCKSDB_BULK_LOAD_OPTIMIZED"] = "true"
+
+    server_proc = subprocess.Popen(["indradb"], stdout=sys.stdout, stderr=sys.stderr, env=env)
     
     while True:
-        # Check if the server is now responding to HTTP requests
         try:
-            res = requests.get("http://localhost:8000", timeout=1)
+            client = indradb.Client(HOST_CONFIG)
 
-            if res.status_code == 404:
+            if client.ping().wait().ready:
                 break
-        except requests.exceptions.RequestException:
-            pass
+        except ConnectionRefusedError as e:
+            print(e)
+        except socket.error as e:
+            print(e)
 
-        # Server is not yet responding to HTTP requests - let's make sure it's
+        # Server is not yet responding to requests - let's make sure it's
         # running in the first place
         if server_proc.poll() != None:
             raise Exception("Server failed to start")
@@ -36,6 +47,6 @@ def server():
         time.sleep(1)
 
     try:
-        yield
+        yield client
     finally:
         server_proc.terminate()
