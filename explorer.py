@@ -34,16 +34,16 @@ class HomeHandler(RequestHandler):
 
         # Get all of the data we want from IndraDB in a single
         # request/transaction
-        vertex_query = indradb.VertexQuery.vertices([article_id])
+        vertex_query = indradb.SpecificVertexQuery(article_id)
         trans = self.client.transaction()
 
         vertex_data, edge_count, edge_data = capnp.join_promises([
             trans.get_vertices(vertex_query),
             trans.get_edge_count(article_id, None, "outbound"),
-            trans.get_edges(vertex_query.outbound_edges(EDGE_LIMIT, type_filter="link")),
+            trans.get_edges(vertex_query.outbound(EDGE_LIMIT).t("link")),
         ]).wait()
 
-        name_data = trans.get_vertex_properties(indradb.EdgeQuery.edges([e.key for e in edge_data]).inbound_vertices(EDGE_LIMIT), "name").wait()
+        name_data = trans.get_vertex_properties(indradb.SpecificEdgeQuery(*[e.key for e in edge_data]).inbound(EDGE_LIMIT).property("name")).wait()
         
         inbound_edge_ids = [e.key.inbound_id for e in edge_data]
         inbound_edge_names = {p.id: p.value for p in name_data}

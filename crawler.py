@@ -134,8 +134,8 @@ class Inserter:
 
         for article_name in new_article_names:
             vertex_id = uuid.uuid1()
-            items.append(indradb.BulkInsertItem.vertex(indradb.Vertex(vertex_id, "article")))
-            items.append(indradb.BulkInsertItem.vertex_property(vertex_id, "name", article_name))
+            items.append(indradb.BulkInsertVertex(indradb.Vertex(vertex_id, "article")))
+            items.append(indradb.BulkInsertVertexProperty(vertex_id, "name", article_name))
             self.article_names_to_ids[article_name] = vertex_id
 
         return self.client.bulk_insert(items)
@@ -154,7 +154,7 @@ class Inserter:
                 self.article_names_to_ids[to_article_name],
             )
 
-            items.append(indradb.BulkInsertItem.edge(edge_key))
+            items.append(indradb.BulkInsertEdge(edge_key))
 
         return self.client.bulk_insert(items)
 
