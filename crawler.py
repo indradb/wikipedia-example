@@ -14,9 +14,6 @@ import os
 import re
 import sys
 import time
-import uuid
-import pickle
-import shelve
 
 import capnp
 import wikipedia
@@ -113,7 +110,7 @@ def iterate_page_links(streamer):
 class Inserter:
     def __init__(self, client):
         self.client = client
-        self.article_names_to_ids = {}
+        self.indexed = set([])
 
     def articles(self, links_chunk):
         """
@@ -124,19 +121,17 @@ class Inserter:
 
         # Find all of the unique article names that haven't been inserted before
         for (from_article_name, to_article_name) in links_chunk:
-            if from_article_name not in self.article_names_to_ids:
+            if from_article_name not in self.indexed:
                 new_article_names.add(from_article_name)
-            if to_article_name not in self.article_names_to_ids:
+            if to_article_name not in self.indexed:
                 new_article_names.add(to_article_name)
 
         # Create the articles in IndraDB
         items = []
 
         for article_name in new_article_names:
-            vertex_id = uuid.uuid1()
-            items.append(indradb.BulkInsertVertex(indradb.Vertex(vertex_id, "article")))
-            items.append(indradb.BulkInsertVertexProperty(vertex_id, "name", article_name))
-            self.article_names_to_ids[article_name] = vertex_id
+            items.append(indradb.BulkInsertVertex(indradb.Vertex(article_name, "article")))
+            self.indexed.add(article_name)
 
         return self.client.bulk_insert(items)
 
@@ -148,12 +143,7 @@ class Inserter:
         items = []
 
         for (from_article_name, to_article_name) in links_chunk:
-            edge_key = indradb.EdgeKey(
-                self.article_names_to_ids[from_article_name],
-                "link",
-                self.article_names_to_ids[to_article_name],
-            )
-
+            edge_key = indradb.EdgeKey(from_article_name, "link", to_article_name)
             items.append(indradb.BulkInsertEdge(edge_key))
 
         return self.client.bulk_insert(items)
@@ -174,7 +164,6 @@ def main(archive_path):
     with wikipedia.server(bulk_load_optimized=True) as client:
         inserter = Inserter(client)
         streamer = ByteStreamer(archive_path)
-        print("Decompressing and indexing content...")
 
         # Now insert the articles and links iteratively
         for links_chunk in wikipedia.grouper(iterate_page_links(streamer)):
@@ -186,13 +175,6 @@ def main(archive_path):
             progress(mb_processed, archive_size_mb)
 
         last_promise.wait()
-
-        print("\nDumping results...")
-
-        with shelve.open("data/article_names_to_ids.shelve") as persisted_article_names_to_ids:
-            persisted_article_names_to_ids.update(inserter.article_names_to_ids)
-
-        print("Done!")
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:
