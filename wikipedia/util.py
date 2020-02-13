@@ -1,3 +1,5 @@
+import uuid
+import hashlib
 import itertools
 
 # Maximum number of items to return per chunk in `grouper`
@@ -11,3 +13,6 @@ def grouper(iterable):
        if not chunk:
            return
        yield chunk
+
+def article_uuid(name):
+    return uuid.UUID(bytes=hashlib.sha256(name.encode("utf8")).digest()[:16])

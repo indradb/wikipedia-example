@@ -5,7 +5,6 @@ from tornado.ioloop import IOLoop
 from tornado.web import Application, RequestHandler, HTTPError
 from tornado.httpclient import HTTPClient
 import indradb
-import shelve
 import capnp
 
 # Location of the templates
@@ -14,9 +13,8 @@ TEMPLATE_DIR = "./templates"
 EDGE_LIMIT = 1000
 
 class HomeHandler(RequestHandler):
-    def initialize(self, client, db):
+    def initialize(self, client):
         self.client = client
-        self.db = db
 
     def get(self):
         if self.get_argument("action", None) == "get_article":
@@ -27,10 +25,7 @@ class HomeHandler(RequestHandler):
 
     def get_article(self, article_name):
         # Get the ID of the article we want from its name
-        article_id = self.db[article_name]
-
-        if not article_id:
-            raise HTTPError(404)
+        article_id = wikipedia.article_uuid(article_name)
 
         # Get all of the data we want from IndraDB in a single
         # request/transaction
@@ -42,6 +37,9 @@ class HomeHandler(RequestHandler):
             trans.get_edge_count(article_id, None, "outbound"),
             trans.get_edges(vertex_query.outbound(EDGE_LIMIT).t("link")),
         ]).wait()
+
+        if len(vertex_data) == 0:
+            raise HTTPError(404)
 
         name_data = trans.get_vertex_properties(indradb.SpecificEdgeQuery(*[e.key for e in edge_data]).inbound(EDGE_LIMIT).property("name")).wait()
         
@@ -63,12 +61,9 @@ class HomeHandler(RequestHandler):
 
 def main():
     with wikipedia.server() as client:
-        with shelve.open("data/article_names_to_ids.shelve") as db:
-            handler_args = dict(client=client, db=db)
-            app_settings = dict(template_path=TEMPLATE_DIR)
-            app = Application([(r"/", HomeHandler, handler_args)], **app_settings)
-            app.listen(8080)
-            IOLoop.current().start()
+        app = Application([(r"/", HomeHandler, dict(client=client))], template_path=TEMPLATE_DIR)
+        app.listen(8080)
+        IOLoop.current().start()
 
 if __name__ == "__main__":
     main()

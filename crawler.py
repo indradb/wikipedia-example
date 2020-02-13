@@ -5,7 +5,7 @@ This application will:
 2) Find all the links in the article content to other wiki articles
 3) Create vertices/edges in IndraDB
 
-Once completed, the wikipedia dataset will be explorable from briad.
+Once completed, the wikipedia dataset will be explorable.
 """
 
 import bz2
@@ -14,9 +14,7 @@ import os
 import re
 import sys
 import time
-import uuid
 import pickle
-import shelve
 
 import capnp
 import wikipedia
@@ -120,7 +118,7 @@ class Inserter:
         From a batch of links, this finds all the unique articles, inserts
         them into IndraDB.
         """
-        new_article_names = set([])
+        new_article_names = set()
 
         # Find all of the unique article names that haven't been inserted before
         for (from_article_name, to_article_name) in links_chunk:
@@ -133,7 +131,7 @@ class Inserter:
         items = []
 
         for article_name in new_article_names:
-            vertex_id = uuid.uuid1()
+            vertex_id = wikipedia.article_uuid(article_name)
             items.append(indradb.BulkInsertVertex(indradb.Vertex(vertex_id, "article")))
             items.append(indradb.BulkInsertVertexProperty(vertex_id, "name", article_name))
             self.article_names_to_ids[article_name] = vertex_id
@@ -174,7 +172,6 @@ def main(archive_path):
     with wikipedia.server(bulk_load_optimized=True) as client:
         inserter = Inserter(client)
         streamer = ByteStreamer(archive_path)
-        print("Decompressing and indexing content...")
 
         # Now insert the articles and links iteratively
         for links_chunk in wikipedia.grouper(iterate_page_links(streamer)):
@@ -186,13 +183,6 @@ def main(archive_path):
             progress(mb_processed, archive_size_mb)
 
         last_promise.wait()
-
-        print("\nDumping results...")
-
-        with shelve.open("data/article_names_to_ids.shelve") as persisted_article_names_to_ids:
-            persisted_article_names_to_ids.update(inserter.article_names_to_ids)
-
-        print("Done!")
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:
