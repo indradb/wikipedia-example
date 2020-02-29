@@ -15,4 +15,5 @@ def grouper(iterable, max_chunk_size=MAX_CHUNK_SIZE):
        yield chunk
 
 def article_uuid(name):
-    return uuid.UUID(bytes=hashlib.sha256(name.encode("utf8")).digest()[:16])
+    h = hashlib.blake2b(name.encode("utf8"), digest_size=16)
+    return uuid.UUID(bytes=h.digest())
