@@ -113,6 +113,31 @@ class Inserter:
         self.client = client
         self.article_names_to_ids = {}
 
+    def restore(self, links_chunk):
+        """
+        Restores the article name to ID mapping, returning whether the
+        restoration was successful.
+        """
+
+        if len(links_chunk) == 0:
+            return True
+
+        # First ensure these links are in IndraDB - checking that the last
+        # article has its links should suffice
+        last_article_id = wikipedia.article_uuid(links_chunk[-1][0])
+        trans = self.client.transaction()
+        edge_count = trans.get_edge_count(last_article_id, "link", "outbound").wait()
+        
+        if edge_count == 0:
+            return False
+
+        # Set article_names_to_ids values
+        for link in links_chunk:
+            for article_name in link:
+                self.article_names_to_ids[article_name] = wikipedia.article_uuid(article_name)
+
+        return True
+
     def articles(self, links_chunk):
         """
         From a batch of links, this finds all the unique articles, inserts
@@ -165,22 +190,26 @@ def progress(count, total):
     sys.stdout.flush()
 
 def main(archive_path):
+    restoring = True
     last_promise = capnp.join_promises([]) # Create an empty promise
-    start_time = time.time()
     archive_size_mb = os.stat(archive_path).st_size / 1024 / 1024
 
     with wikipedia.server(bulk_load_optimized=True) as client:
         inserter = Inserter(client)
         streamer = ByteStreamer(archive_path)
 
-        # Now insert the articles and links iteratively
         for links_chunk in wikipedia.grouper(iterate_page_links(streamer)):
+            mb_processed = streamer.read_bytes / 1024 / 1024
+            progress(mb_processed, archive_size_mb)
+
+            if restoring:
+                if inserter.restore(links_chunk):
+                    continue
+                restoring = False
+
             last_promise.wait()
             inserter.articles(links_chunk).wait()
             last_promise = inserter.links(links_chunk)
-            cur_time = time.time()
-            mb_processed = streamer.read_bytes / 1024 / 1024
-            progress(mb_processed, archive_size_mb)
 
         last_promise.wait()
 
