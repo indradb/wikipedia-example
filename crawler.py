@@ -3,9 +3,7 @@ This application will:
 
 1) Decompress/parse a bzipped archive of wikipedia article data-on-the-fly
 2) Find all the links in the article content to other wiki articles
-3) Create vertices/edges in IndraDB
-
-Once completed, the wikipedia dataset will be explorable.
+3) Write the results to a TSV file
 """
 
 import bz2
@@ -13,27 +11,11 @@ from xml.etree import ElementTree
 import os
 import re
 import sys
-import time
-import pickle
 
-import capnp
 import wikipedia
-import indradb
-
-PROGRESS_BAR_LENGTH = 55
 
 # Pattern for finding internal links in wikitext
 WIKI_LINK_PATTERN = re.compile(r"\[\[([^\[\]|]+)(|[\]]+)?\]\]")
-
-# Valid URL patterns
-URL_PATTERN = re.compile(
-    r'^(?:http)s?://' # http:// or https://
-    r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|' #domain...
-    r'localhost|' #localhost...
-    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})' # ...or ip
-    r'(?::\d+)?' # optional port
-    r'(?:/?|[/?]\S+)$', re.IGNORECASE
-)
 
 # Size of the `ByteStreamer` buffer
 BYTE_STREAMER_BUFFER_SIZE = 1024 * 1024 * 10
@@ -51,8 +33,6 @@ ARTICLE_NAME_PREFIX_BLACKLIST = [
     "Template:",
     "User:",
 ]
-
-ERASE_LINE = '\x1b[2K'
 
 class ByteStreamer(object):
     """Streams decompressed bytes"""
@@ -102,116 +82,22 @@ def iterate_page_links(streamer):
                         assert content is not None
 
                         for match in re.finditer(WIKI_LINK_PATTERN, content):
-                            yield (title, match.group(1).replace("\n", ""))
+                            yield (title, match.group(1).replace("\n", "").replace("\t", ""))
 
                 elem.clear()
     except EOFError:
         pass
 
-class Inserter:
-    def __init__(self, client):
-        self.client = client
-        self.article_names_to_ids = {}
-
-    def restore(self, links_chunk):
-        """
-        Restores the article name to ID mapping, returning whether the
-        restoration was successful.
-        """
-
-        if len(links_chunk) == 0:
-            return True
-
-        # First ensure these links are in IndraDB - checking that the last
-        # article has its links should suffice
-        last_article_id = wikipedia.article_uuid(links_chunk[-1][0])
-        trans = self.client.transaction()
-        edge_count = trans.get_edge_count(last_article_id, "link", "outbound").wait()
-        
-        if edge_count == 0:
-            return False
-
-        # Set article_names_to_ids values
-        for link in links_chunk:
-            for article_name in link:
-                self.article_names_to_ids[article_name] = wikipedia.article_uuid(article_name)
-
-        return True
-
-    def articles(self, links_chunk):
-        """
-        From a batch of links, this finds all the unique articles, inserts
-        them into IndraDB.
-        """
-        new_article_names = set()
-
-        # Find all of the unique article names that haven't been inserted before
-        for (from_article_name, to_article_name) in links_chunk:
-            if from_article_name not in self.article_names_to_ids:
-                new_article_names.add(from_article_name)
-            if to_article_name not in self.article_names_to_ids:
-                new_article_names.add(to_article_name)
-
-        # Create the articles in IndraDB
-        items = []
-
-        for article_name in new_article_names:
-            vertex_id = wikipedia.article_uuid(article_name)
-            items.append(indradb.BulkInsertVertex(indradb.Vertex(vertex_id, "article")))
-            items.append(indradb.BulkInsertVertexProperty(vertex_id, "name", article_name))
-            self.article_names_to_ids[article_name] = vertex_id
-
-        return self.client.bulk_insert(items)
-
-    def links(self, links_chunk):
-        """
-        From a batch of links, this inserts all of the links into IndraDB.
-        """
-
-        items = []
-
-        for (from_article_name, to_article_name) in links_chunk:
-            edge_key = indradb.EdgeKey(
-                self.article_names_to_ids[from_article_name],
-                "link",
-                self.article_names_to_ids[to_article_name],
-            )
-
-            items.append(indradb.BulkInsertEdge(edge_key))
-
-        return self.client.bulk_insert(items)
-
-def progress(count, total):
-    filled_len = int(round(PROGRESS_BAR_LENGTH * count / float(total)))
-    percent = round(100.0 * count / float(total), 1)
-    bar = "#" * filled_len + " " * (PROGRESS_BAR_LENGTH - filled_len)
-    sys.stdout.write(ERASE_LINE)
-    sys.stdout.write("[{}] {}% | {:.0f}/{:.0f}\r".format(bar, percent, count, total))
-    sys.stdout.flush()
-
 def main(archive_path):
-    restoring = True
-    last_promise = capnp.join_promises([]) # Create an empty promise
     archive_size_mb = os.stat(archive_path).st_size / 1024 / 1024
 
-    with wikipedia.server(bulk_load_optimized=True) as client:
-        inserter = Inserter(client)
-        streamer = ByteStreamer(archive_path)
+    streamer = ByteStreamer(archive_path)
 
-        for links_chunk in wikipedia.grouper(iterate_page_links(streamer)):
+    with open("data/links.tsv", "w") as f:
+        for (src, dst) in iterate_page_links(streamer):
             mb_processed = streamer.read_bytes / 1024 / 1024
-            progress(mb_processed, archive_size_mb)
-
-            if restoring:
-                if inserter.restore(links_chunk):
-                    continue
-                restoring = False
-
-            last_promise.wait()
-            inserter.articles(links_chunk).wait()
-            last_promise = inserter.links(links_chunk)
-
-        last_promise.wait()
+            f.write("{}\t{}\n".format(src, dst))
+            wikipedia.progress(mb_processed, archive_size_mb)
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:

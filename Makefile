@@ -14,6 +14,7 @@ venv:
 data: venv
 	mkdir -p data
 	. venv/bin/activate && python crawler.py enwiki-latest-pages-articles.xml.bz2
+	. venv/bin/activate && python inserter.py
 
 clean:
 	rm -rf venv data
