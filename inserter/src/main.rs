@@ -17,7 +17,7 @@ use blake2b_simd::Params;
 use pbr::ProgressBar;
 
 const PORT: u16 = 27615;
-const REQUEST_BUFFER_SIZE: usize = 10_000;
+const REQUEST_BUFFER_SIZE: u32 = 10_000;
 
 async fn build_client(spawner: &LocalSpawner) -> Result<indradb::service::Client, CapnpError> {
     let addr = format!("127.0.0.1:{}", PORT).to_socket_addrs().unwrap().next().unwrap();
@@ -41,36 +41,15 @@ async fn build_client(spawner: &LocalSpawner) -> Result<indradb::service::Client
     Ok(client)
 }
 
-async fn flush_articles_buffer(client: &indradb::service::Client, buffer: Vec<(String, Uuid)>) -> Result<(), Box<dyn Error>> {
-    let mut req = client.bulk_insert_request();
-    let mut req_items = req.get().init_items((buffer.len() * 2) as u32);
-
-    for (i, (name, uuid)) in buffer.into_iter().enumerate() {
-        {
-            let req_item = req_items.reborrow().get((i * 2) as u32);
-            let mut builder = req_item.init_vertex().get_vertex()?;
-            builder.set_id(uuid.as_bytes());
-            builder.set_t("article");
-        }
-        {
-            let req_item = req_items.reborrow().get((i * 2) as u32 + 1);
-            let mut builder = req_item.init_vertex_property();
-            builder.set_id(uuid.as_bytes());
-            builder.set_name("name");
-            builder.set_value(&JsonValue::String(name.clone()).to_string());
-        }
-    }
-
-    let res = req.send().promise.await?;
-    res.get()?;
-    Ok(())
-}
-
 async fn insert_articles(client: &indradb::service::Client, f: &File, progress: &mut ProgressBar<Stdout>) -> Result<HashMap<String, Uuid>, Box<dyn Error>> {
     let mut uuids = HashMap::<String, Uuid>::new();
+    
     let mut params = Params::new();
     let hasher = params.hash_length(16);
-    let mut buffer = Vec::<(String, Uuid)>::with_capacity(REQUEST_BUFFER_SIZE);
+
+    let mut req = client.bulk_insert_request();
+    let mut req_items = req.get().init_items(REQUEST_BUFFER_SIZE);
+    let mut req_index = 0u32;
 
     for line in BufReader::new(f).lines() {
         progress.inc();
@@ -87,40 +66,45 @@ async fn insert_articles(client: &indradb::service::Client, f: &File, progress: 
         let uuid = Uuid::from_slice(hasher.hash(line.as_bytes()).as_bytes())?;
 
         uuids.insert(line.clone(), uuid);
-        buffer.push((line, uuid));
 
-        if buffer.len() >= REQUEST_BUFFER_SIZE {
-            flush_articles_buffer(client, buffer).await?;
-            buffer = Vec::<(String, Uuid)>::with_capacity(REQUEST_BUFFER_SIZE);
+        {
+            let req_item = req_items.reborrow().get(req_index);
+            let mut builder = req_item.init_vertex().get_vertex()?;
+            builder.set_id(uuid.as_bytes());
+            builder.set_t("article");
+        }
+        {
+            let req_item = req_items.reborrow().get(req_index + 1);
+            let mut builder = req_item.init_vertex_property();
+            builder.set_id(uuid.as_bytes());
+            builder.set_name("name");
+            builder.set_value(&JsonValue::String(line).to_string());
+        }
+
+        req_index += 2;
+
+        if req_index >= REQUEST_BUFFER_SIZE {
+            let res = req.send().promise.await?;
+            res.get()?;
+            req = client.bulk_insert_request();
+            req_items = req.get().init_items(REQUEST_BUFFER_SIZE);
+            req_index = 0;
         }
     }
 
-    if buffer.len() > 0 {
-        flush_articles_buffer(client, buffer).await?;
+    if req_index > 0 {
+        let res = req.send().promise.await?;
+        res.get()?;
     }
-
 
     Ok(uuids)
 }
 
-async fn flush_links_buffer(client: &indradb::service::Client, buffer: Vec<(Uuid, Uuid)>) -> Result<(), Box<dyn Error>> {
-    let mut req = client.bulk_insert_request();
-    let mut req_items = req.get().init_items(buffer.len() as u32);
-
-    for (i, (src_uuid, dst_uuid)) in buffer.into_iter().enumerate() {
-        let req_item = req_items.reborrow().get(i as u32);
-        let mut builder = req_item.init_edge().get_key()?;
-        builder.set_outbound_id(src_uuid.as_bytes());
-        builder.set_t("link");
-        builder.set_inbound_id(dst_uuid.as_bytes());
-    }
-
-    Ok(())
-}
-
 async fn insert_links(client: &indradb::service::Client, f: &File, uuids: HashMap<String, Uuid>, progress: &mut ProgressBar<Stdout>) -> Result<(), Box<dyn Error>> {
     let mut src_uuid: Option<Uuid> = None;
-    let mut buffer = Vec::<(Uuid, Uuid)>::new();
+    let mut req = client.bulk_insert_request();
+    let mut req_items = req.get().init_items(REQUEST_BUFFER_SIZE);
+    let mut req_index = 0u32;
 
     for line in BufReader::new(f).lines() {
         progress.inc();
@@ -128,20 +112,31 @@ async fn insert_links(client: &indradb::service::Client, f: &File, uuids: HashMa
         let line = line?;
         if line.starts_with("\t") {
             let dst_uuid = uuids[&line[1..]];
-            buffer.push((src_uuid.unwrap(), dst_uuid));
-            if buffer.len() >= REQUEST_BUFFER_SIZE {
-                flush_links_buffer(client, buffer).await?;
-                buffer = Vec::<(Uuid, Uuid)>::with_capacity(REQUEST_BUFFER_SIZE);
+
+            let req_item = req_items.reborrow().get(req_index);
+            let mut builder = req_item.init_edge().get_key()?;
+            builder.set_outbound_id(src_uuid.unwrap().as_bytes());
+            builder.set_t("link");
+            builder.set_inbound_id(dst_uuid.as_bytes());
+
+            req_index += 1;
+
+            if req_index >= REQUEST_BUFFER_SIZE {
+                let res = req.send().promise.await?;
+                res.get()?;
+                req = client.bulk_insert_request();
+                req_items = req.get().init_items(REQUEST_BUFFER_SIZE);
+                req_index = 0;
             }
         } else {
             src_uuid = Some(uuids[&line]);
         }
     }
 
-    if buffer.len() > 0 {
-        flush_links_buffer(client, buffer).await?;
+    if req_index > 0 {
+        let res = req.send().promise.await?;
+        res.get()?;
     }
-
 
     Ok(())
 }
