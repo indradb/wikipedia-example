@@ -8,8 +8,38 @@ import os
 import sys
 
 import capnp
-import wikipedia
 import indradb
+import wikipedia
+
+# Maximum number of items to return per chunk
+MAX_CHUNK_SIZE = 50000
+
+class Chunker:
+    def __init__(self, filename):
+        self.filename = filename
+        self.offset = 0
+        self.size = os.stat(filename).st_size
+
+    def chunks(self):
+        src = None
+        buf = []
+
+        with open(self.filename, "r") as f:
+            for line in f:
+                self.offset += len(line)
+                line = line.rstrip()
+
+                if line.startswith("\t"):
+                    buf.append((src, line[1:]))
+                else:
+                    src = line
+
+                if len(buf) >= MAX_CHUNK_SIZE:
+                    yield buf
+                    buf = []
+
+        if len(buf) > 0:
+            yield buf
 
 class Inserter:
     def __init__(self, client):
@@ -26,12 +56,14 @@ class Inserter:
             return True
 
         # First ensure these links are in IndraDB - checking that the last
-        # article has its links should suffice
-        last_article_id = wikipedia.article_uuid(links_chunk[-1][0])
+        # link exists should suffice
         trans = self.client.transaction()
-        edge_count = trans.get_edge_count(last_article_id, "link", "outbound").wait()
-        
-        if edge_count == 0:
+        edges = trans.get_edges(indradb.SpecificEdgeQuery(indradb.EdgeKey(
+            wikipedia.article_uuid(links_chunk[-1][0]),
+            "link",
+            wikipedia.article_uuid(links_chunk[-1][1]),
+        ))).wait()
+        if len(edges) == 0:
             return False
 
         # Set article_names_to_ids values
@@ -87,33 +119,24 @@ class Inserter:
 def main():
     restoring = True
     last_promise = capnp.join_promises([]) # Create an empty promise
-    archive_size_mb = os.stat("data/links.tsv").st_size / 1024 / 1024
-    offset = 0
+    chunker = Chunker("data/links.txt")
 
-    with open("data/links.tsv", "r") as f:
-        with wikipedia.server(bulk_load_optimized=True) as client:
-            inserter = Inserter(client)
+    with wikipedia.server(bulk_load_optimized=True) as client:
+        inserter = Inserter(client)
 
-            for lines in wikipedia.grouper(f):
-                offset += sum(len(l) for l in lines)
-                mb_processed = offset / 1024 / 1024
-                wikipedia.progress(mb_processed, archive_size_mb)
+        for links_chunk in chunker.chunks():
+            wikipedia.progress(chunker.offset, chunker.size)
 
-                links_chunk = [l.strip().split("\t", maxsplit=1) for l in lines]
-
-                if restoring:
-                    if inserter.restore(links_chunk):
-                        continue
-                    restoring = False
-
-                last_promise.wait()
-                inserter.articles(links_chunk).wait()
-                last_promise = inserter.links(links_chunk)
+            if restoring:
+                if inserter.restore(links_chunk):
+                    continue
+                restoring = False
 
             last_promise.wait()
+            inserter.articles(links_chunk).wait()
+            last_promise = inserter.links(links_chunk)
+        
+        last_promise.wait()
 
 if __name__ == "__main__":
-    if len(sys.argv) <= 1:
-        raise Exception("No archive path specified")
-    else:
-        main(sys.argv[1])
+    main()

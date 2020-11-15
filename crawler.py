@@ -11,8 +11,8 @@ from xml.etree import ElementTree
 import os
 import re
 import sys
-
-import wikipedia
+import uuid
+import hashlib
 
 # Pattern for finding internal links in wikitext
 WIKI_LINK_PATTERN = re.compile(r"\[\[([^\[\]|]+)(|[\]]+)?\]\]")
@@ -34,6 +34,8 @@ ARTICLE_NAME_PREFIX_BLACKLIST = [
     "User:",
 ]
 
+ERASE_LINE = '\x1b[2K'
+
 class ByteStreamer(object):
     """Streams decompressed bytes"""
 
@@ -51,25 +53,27 @@ class ByteStreamer(object):
 def iterate_page_links(streamer):
     """Parses a stream of XML, and yields the article links"""
 
-    title = None
+    src = None
     content = None
     blacklisted = False
+    linked = set()
     is_tag = lambda elem, name: elem.tag == "{%s}%s" % (EXPORT_NAMESPACE, name)
 
     try:
         for event, elem in ElementTree.iterparse(streamer, events=("start", "end")):
             if event == "start":
                 if is_tag(elem, "page"):
-                    title = None
+                    src = None
                     content = None
                     blacklisted = False
+                    linked = set()
             elif event == "end":
                 if not blacklisted:
                     if is_tag(elem, "title"):
-                        assert title is None
-                        title = elem.text
+                        assert src is None
+                        src = elem.text
 
-                        if any(title.startswith(p) for p in ARTICLE_NAME_PREFIX_BLACKLIST):
+                        if any(src.startswith(p) for p in ARTICLE_NAME_PREFIX_BLACKLIST):
                             blacklisted = True
                     elif is_tag(elem, "text"):
                         assert content is None
@@ -78,26 +82,48 @@ def iterate_page_links(streamer):
                         if content.startswith("#REDIRECT [["):
                             blacklisted = True
                     elif is_tag(elem, "page"):
-                        assert title is not None
+                        assert src is not None
                         assert content is not None
 
                         for match in re.finditer(WIKI_LINK_PATTERN, content):
-                            yield (title, match.group(1).replace("\n", "").replace("\t", ""))
+                            dst = match.group(1).replace("\n", "").replace("\t", "")
+
+                            if dst not in linked:
+                                yield (src, dst)
+                                linked.add(dst)
 
                 elem.clear()
     except EOFError:
         pass
 
+def progress(count, total):
+    # convert to mb
+    count /= (1024 * 1024)
+    total /= (1024 * 1024)
+
+    percent = round(100.0 * count / float(total), 1)
+
+    sys.stdout.write(ERASE_LINE)
+    sys.stdout.write("[{}] {}% | {:.0f}/{:.0f}\r".format(percent, count, total))
+    sys.stdout.flush()
+
+def article_uuid(name):
+    h = hashlib.blake2b(name.encode("utf8"), digest_size=16)
+    return uuid.UUID(bytes=h.digest())
+
 def main(archive_path):
-    archive_size_mb = os.stat(archive_path).st_size / 1024 / 1024
-
+    archive_size = os.stat(archive_path).st_size
     streamer = ByteStreamer(archive_path)
+    cur_src = None
 
-    with open("data/links.tsv", "w") as f:
+    with open("data/links.txt", "w") as f:
         for (src, dst) in iterate_page_links(streamer):
-            mb_processed = streamer.read_bytes / 1024 / 1024
-            f.write("{}\t{}\n".format(src, dst))
-            wikipedia.progress(mb_processed, archive_size_mb)
+            progress(streamer.read_bytes, archive_size)
+
+            if src != cur_src:
+                f.write(src + "\n")
+                cur_src = src
+            f.write("\t" + dst + "\n")
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:
