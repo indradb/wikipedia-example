@@ -194,7 +194,7 @@ def main(archive_path):
     last_promise = capnp.join_promises([]) # Create an empty promise
     archive_size_mb = os.stat(archive_path).st_size / 1024 / 1024
 
-    with wikipedia.server(bulk_load_optimized=True) as client:
+    with wikipedia.server() as client:
         inserter = Inserter(client)
         streamer = ByteStreamer(archive_path)
 
