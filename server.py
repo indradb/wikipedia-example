@@ -18,7 +18,7 @@ DATABASE_URL = "sled://data/wikipedia.sled"
 # avoiding /var/run because it requires root
 PID_FILE = "/tmp/indradb-wikipedia-example.pid"
 
-def start(bulk_load_optimized):
+def start():
     if os.path.isfile(PID_FILE):
         raise Exception("server appears to be running, as '{}' already exists".format(PID_FILE))
 
@@ -26,9 +26,7 @@ def start(bulk_load_optimized):
     env["SECRET"] = SECRET
     env["DATABASE_URL"] = DATABASE_URL
     env["RUST_BACKTRACE"] = "1"
-
-    if bulk_load_optimized:
-        env["ROCKSDB_BULK_LOAD_OPTIMIZED"] = "true"
+    env["SLEDDB_COMPRESSION"] = "true"
 
     server_proc = subprocess.Popen(["indradb"], stdout=sys.stdout, stderr=sys.stderr, env=env)
     
@@ -69,7 +67,6 @@ def stop():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--bulk-load-optimized", action="store_true", help="Optimize for bulk loading")
     parser.add_argument("--stop", action="store_true", help="Stop a running server")
     args = parser.parse_args()
 
@@ -77,7 +74,7 @@ def main():
         if not stop():
             raise Exception("could not find server to stop")
     else:
-        start(args.bulk_load_optimized)
+        start()
 
 if __name__ == "__main__":
     main()
