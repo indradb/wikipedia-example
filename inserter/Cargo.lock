@@ -34,6 +34,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "array-init"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f30bbe2f5e3d117f55bd8c7a1f9191e4a5deba9f15f595bbea4f670c59c765db"
+
+[[package]]
 name = "arrayref"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -411,14 +417,15 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-epoch"
-version = "0.9.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0f606a85340376eef0d6d8fec399e6d4a544d648386c6645eb6d0653b27d9f"
+checksum = "058ed274caafc1f60c4997b5fc07bf7dc7cca454af7c6e81edffe5f33f70dace"
 dependencies = [
- "cfg-if 1.0.0",
- "const_fn",
- "crossbeam-utils 0.8.0",
+ "autocfg",
+ "cfg-if 0.1.10",
+ "crossbeam-utils 0.7.2",
  "lazy_static",
+ "maybe-uninit",
  "memoffset",
  "scopeguard",
 ]
@@ -445,6 +452,12 @@ dependencies = [
  "const_fn",
  "lazy_static",
 ]
+
+[[package]]
+name = "either"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
 
 [[package]]
 name = "env_logger"
@@ -680,25 +693,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "indradb"
-version = "1.1.0"
-dependencies = [
- "async-std",
- "capnp",
- "capnp-rpc",
- "capnpc",
- "chrono",
- "failure",
- "futures",
- "indradb-lib",
- "num_cpus",
- "serde_json",
- "uuid",
-]
-
-[[package]]
 name = "indradb-lib"
-version = "1.1.0"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7390292f06405211adccaf4b41afec3163ce15391cb036775ffc8d1451ba0ec9"
 dependencies = [
  "byteorder",
  "chrono",
@@ -713,6 +711,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "indradb-proto"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f12e036a4338281eca25d739e894a28217a5da842251834e15a3d0bfefee988"
+dependencies = [
+ "capnp",
+ "capnpc",
+ "chrono",
+ "indradb-lib",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "indradb-wikipedia-inserter"
 version = "0.1.0"
 dependencies = [
@@ -721,7 +733,7 @@ dependencies = [
  "capnp",
  "capnp-rpc",
  "futures",
- "indradb",
+ "indradb-proto",
  "pbr",
  "serde_json",
  "uuid",
@@ -734,6 +746,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb1fc4429a33e1f80d41dc9fea4d108a88bec1de8053878898ae448a0b52f613"
 dependencies = [
  "cfg-if 1.0.0",
+]
+
+[[package]]
+name = "itertools"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "284f18f85651fe11e8a991b2adb42cb078325c996ed026d994719efcfca1d54b"
+dependencies = [
+ "either",
 ]
 
 [[package]]
@@ -1186,18 +1207,20 @@ checksum = "c111b5bd5695e56cffe5129854aa230b39c93a305372fdbb2668ca2394eea9f8"
 
 [[package]]
 name = "sled"
-version = "0.34.5"
+version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34a9981af2a13b88f562777db36ed6e8695eef9be8bbbfb1c8b1c83762b8c15c"
+checksum = "701fd6e07375a3ecff6f754e990862fc115e881f602b950518e18658005e262b"
 dependencies = [
+ "array-init",
  "crc32fast",
  "crossbeam-epoch",
- "crossbeam-utils 0.8.0",
+ "crossbeam-utils 0.7.2",
  "fs2",
  "fxhash",
  "libc",
  "log",
  "parking_lot",
+ "zstd",
 ]
 
 [[package]]
@@ -1451,3 +1474,34 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "zstd"
+version = "0.5.3+zstd.1.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01b32eaf771efa709e8308605bbf9319bf485dc1503179ec0469b611937c0cd8"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "2.0.5+zstd.1.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cfb642e0d27f64729a639c52db457e0ae906e7bc6f5fe8f5c453230400f1055"
+dependencies = [
+ "libc",
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "1.4.17+zstd.1.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b89249644df056b522696b1bb9e7c18c87e8ffa3e2f0dc3b0155875d6498f01b"
+dependencies = [
+ "cc",
+ "glob",
+ "itertools",
+ "libc",
+]

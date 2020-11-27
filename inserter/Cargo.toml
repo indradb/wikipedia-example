@@ -15,6 +15,4 @@ futures = "0.3.5"
 async-std = { version = "1.6.4", features = ["unstable"] }
 blake2b_simd = "0.5.11"
 pbr = "^1.0.3"
-
-# TODO: change this to a proper version
-indradb = { path = "../../indradb/bin" }
+indradb-proto = "1.2.0"

@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{BufReader, BufRead, Stdout, Seek, SeekFrom};
 use std::collections::HashMap;
 
-use common::autogen as indradb;
+use indradb_proto::service;
 use capnp::Error as CapnpError;
 use capnp_rpc::rpc_twoparty_capnp::Side;
 use capnp_rpc::{twoparty, RpcSystem};
@@ -19,7 +19,7 @@ use pbr::ProgressBar;
 const PORT: u16 = 27615;
 const REQUEST_BUFFER_SIZE: u32 = 10_000;
 
-async fn build_client(spawner: &LocalSpawner) -> Result<indradb::service::Client, CapnpError> {
+async fn build_client(spawner: &LocalSpawner) -> Result<service::Client, CapnpError> {
     let addr = format!("127.0.0.1:{}", PORT).to_socket_addrs().unwrap().next().unwrap();
     let stream = async_std::net::TcpStream::connect(&addr).await?;
     stream.set_nodelay(true)?;
@@ -32,7 +32,7 @@ async fn build_client(spawner: &LocalSpawner) -> Result<indradb::service::Client
         Default::default(),
     ));
     let mut rpc_system = RpcSystem::new(rpc_network, None);
-    let client: indradb::service::Client = rpc_system.bootstrap(Side::Server);
+    let client: service::Client = rpc_system.bootstrap(Side::Server);
 
     spawner
         .spawn_local_obj(Box::pin(rpc_system.map(|_| ())).into())
@@ -41,7 +41,7 @@ async fn build_client(spawner: &LocalSpawner) -> Result<indradb::service::Client
     Ok(client)
 }
 
-async fn insert_articles(client: &indradb::service::Client, f: &File, progress: &mut ProgressBar<Stdout>) -> Result<HashMap<String, Uuid>, Box<dyn Error>> {
+async fn insert_articles(client: &service::Client, f: &File, progress: &mut ProgressBar<Stdout>) -> Result<HashMap<String, Uuid>, Box<dyn Error>> {
     let mut uuids = HashMap::<String, Uuid>::new();
     
     let mut params = Params::new();
@@ -100,7 +100,7 @@ async fn insert_articles(client: &indradb::service::Client, f: &File, progress: 
     Ok(uuids)
 }
 
-async fn insert_links(client: &indradb::service::Client, f: &File, uuids: HashMap<String, Uuid>, progress: &mut ProgressBar<Stdout>) -> Result<(), Box<dyn Error>> {
+async fn insert_links(client: &service::Client, f: &File, uuids: HashMap<String, Uuid>, progress: &mut ProgressBar<Stdout>) -> Result<(), Box<dyn Error>> {
     let mut src_uuid: Option<Uuid> = None;
     let mut req = client.bulk_insert_request();
     let mut req_items = req.get().init_items(REQUEST_BUFFER_SIZE);
