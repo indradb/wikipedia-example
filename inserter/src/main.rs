@@ -45,8 +45,10 @@ impl<'a> BulkInserter<'a> {
         Ok(())
     }
 
-    async fn send(&mut self) -> Result<(), CapnpError> {
-        if !self.buf.is_empty() {
+    async fn push(&mut self, item: indradb::BulkInsertItem) -> Result<(), CapnpError> {
+        self.buf.push(item);
+
+        if self.buf.len() >= REQUEST_BUFFER_SIZE {
             while self.promises.len() >= PROMISE_BUFFER_SIZE {
                 let promise = self.promises.pop_front().unwrap();
                 let res = promise.await?;
@@ -61,15 +63,7 @@ impl<'a> BulkInserter<'a> {
             self.promises.push_back(req.send().promise);
             self.buf = Vec::with_capacity(REQUEST_BUFFER_SIZE);
         }
-
-        Ok(())
-    }
-
-    async fn push(&mut self, item: indradb::BulkInsertItem) -> Result<(), CapnpError> {
-        self.buf.push(item);
-        if self.buf.len() >= REQUEST_BUFFER_SIZE {
-            self.send().await?;
-        }
+        
         Ok(())
     }
 }
