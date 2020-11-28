@@ -2,10 +2,11 @@ use std::net::ToSocketAddrs;
 use std::error::Error;
 use std::fs::File;
 use std::io::{BufReader, BufRead, Stdout, Seek, SeekFrom};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use indradb_proto::service;
 use capnp::Error as CapnpError;
+use capnp::capability::{Promise, Response};
 use capnp_rpc::rpc_twoparty_capnp::Side;
 use capnp_rpc::{twoparty, RpcSystem};
 use futures::executor::{LocalPool, LocalSpawner};
@@ -18,38 +19,58 @@ use pbr::ProgressBar;
 
 const PORT: u16 = 27615;
 const REQUEST_BUFFER_SIZE: usize = 10_000;
+const PROMISE_BUFFER_SIZE: usize = 100;
 
 struct BulkInserter<'a> {
     client: &'a service::Client,
-    buf: Vec<indradb::BulkInsertItem>
+    buf: Vec<indradb::BulkInsertItem>,
+    promises: VecDeque<Promise<Response<service::bulk_insert_results::Owned>, CapnpError>>
 }
 
 impl<'a> BulkInserter<'a> {
     fn new(client: &'a service::Client) -> Self {
         Self {
             client,
-            buf: Vec::with_capacity(REQUEST_BUFFER_SIZE)
+            buf: Vec::with_capacity(REQUEST_BUFFER_SIZE),
+            promises: VecDeque::with_capacity(PROMISE_BUFFER_SIZE)
         }
     }
 
-    async fn flush(&mut self) -> Result<(), CapnpError> {
+    async fn flush(self) -> Result<(), CapnpError> {
+        for promise in self.promises {
+            let res = promise.await?;
+            res.get()?;
+        }
+
+        Ok(())
+    }
+
+    async fn send(&mut self) -> Result<(), CapnpError> {
         if !self.buf.is_empty() {
+            if self.promises.len() >= PROMISE_BUFFER_SIZE {
+                for _ in 0..PROMISE_BUFFER_SIZE/10 {
+                    let promise = self.promises.pop_front().unwrap();
+                    let res = promise.await?;
+                    res.get()?;
+                }
+            }
+
             let mut req = self.client.bulk_insert_request();
             indradb_proto::util::from_bulk_insert_items(
                 &self.buf,
                 req.get().init_items(self.buf.len() as u32)
             )?;
-            let res = req.send().promise.await?;
-            res.get()?;
+            self.promises.push_back(req.send().promise);
             self.buf = Vec::with_capacity(REQUEST_BUFFER_SIZE);
         }
+
         Ok(())
     }
 
     async fn push(&mut self, item: indradb::BulkInsertItem) -> Result<(), CapnpError> {
         self.buf.push(item);
         if self.buf.len() >= REQUEST_BUFFER_SIZE {
-            self.flush().await?;
+            self.send().await?;
         }
         Ok(())
     }
