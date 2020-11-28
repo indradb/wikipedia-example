@@ -19,7 +19,7 @@ use pbr::ProgressBar;
 
 const PORT: u16 = 27615;
 const REQUEST_BUFFER_SIZE: usize = 10_000;
-const PROMISE_BUFFER_SIZE: usize = 100;
+const PROMISE_BUFFER_SIZE: usize = 1000;
 
 struct BulkInserter<'a> {
     client: &'a service::Client,
@@ -47,12 +47,10 @@ impl<'a> BulkInserter<'a> {
 
     async fn send(&mut self) -> Result<(), CapnpError> {
         if !self.buf.is_empty() {
-            if self.promises.len() >= PROMISE_BUFFER_SIZE {
-                for _ in 0..PROMISE_BUFFER_SIZE/10 {
-                    let promise = self.promises.pop_front().unwrap();
-                    let res = promise.await?;
-                    res.get()?;
-                }
+            while self.promises.len() >= PROMISE_BUFFER_SIZE {
+                let promise = self.promises.pop_front().unwrap();
+                let res = promise.await?;
+                res.get()?;
             }
 
             let mut req = self.client.bulk_insert_request();
