@@ -96,41 +96,48 @@ async fn build_client(spawner: &LocalSpawner) -> Result<service::Client, CapnpEr
     Ok(client)
 }
 
-async fn insert(client: &service::Client, f: &File, progress: &mut ProgressBar<Stdout>) -> Result<(), Box<dyn Error>> {
-    let mut src_uuid: Option<Uuid> = None;
+async fn insert_articles(client: &service::Client, f: &File, progress: &mut ProgressBar<Stdout>) -> Result<HashMap<String, Uuid>, Box<dyn Error>> {
     let mut uuids = HashMap::<String, Uuid>::new();
-    
     let mut params = Params::new();
     let hasher = params.hash_length(16);
-    
     let mut inserter = BulkInserter::new(client);
-
     let article_type = indradb::Type::new("article").unwrap();
+
+    for line in BufReader::new(f).lines() {
+        let mut line = line?;
+        if line.starts_with('\t') {
+            line = line[1..].to_string();
+        }
+
+        if !uuids.contains_key(&line) {
+            let uuid = Uuid::from_slice(hasher.hash(line.as_bytes()).as_bytes())?;
+            uuids.insert(line.clone(), uuid);
+            inserter.push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(uuid, article_type.clone()))).await?;
+            inserter.push(indradb::BulkInsertItem::VertexProperty(uuid, "name".to_string(), JsonValue::String(line))).await?;
+        }
+
+        progress.inc();
+    }
+
+    inserter.flush().await?;
+    Ok(uuids)
+}
+
+async fn insert_links(client: &service::Client, f: &File, uuids: HashMap<String, Uuid>, progress: &mut ProgressBar<Stdout>) -> Result<(), Box<dyn Error>> {
+    let mut src_uuid: Option<Uuid> = None;
+    let mut inserter = BulkInserter::new(client);
     let link_type = indradb::Type::new("link").unwrap();
 
     for line in BufReader::new(f).lines() {
         let line = line?;
-        let (article_name, is_source) = if line.starts_with('\t') {
-            (line[1..].to_string(), false)
-        } else {
-            (line, true)
-        };
-
-        if !uuids.contains_key(&article_name) {
-            let uuid = Uuid::from_slice(hasher.hash(article_name.as_bytes()).as_bytes())?;
-            uuids.insert(article_name.clone(), uuid);
-            inserter.push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(uuid, article_type.clone()))).await?;
-            inserter.push(indradb::BulkInsertItem::VertexProperty(uuid, "name".to_string(), JsonValue::String(article_name.clone()))).await?;
-        }
-
-        if is_source {
-            src_uuid = Some(uuids[&article_name]);
-        } else {
+        if line.starts_with('\t') {
             inserter.push(indradb::BulkInsertItem::Edge(indradb::EdgeKey::new(
                 src_uuid.unwrap(),
                 link_type.clone(),
-                uuids[&article_name]
+                uuids[&line[1..]]
             ))).await?;
+        } else {
+            src_uuid = Some(uuids[&line]);
         }
 
         progress.inc();
@@ -150,10 +157,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let line_count = BufReader::new(&f).lines().count() as u64;
 
     f.seek(SeekFrom::Start(0))?;
-    let mut progress = ProgressBar::new(line_count);
-    progress.message("indexing content: ");
-    exec.run_until(insert(&client, &f, &mut progress))?;
-    progress.finish();
+    let mut article_progress = ProgressBar::new(line_count);
+    article_progress.message("indexing articles: ");
+    let uuids = exec.run_until(insert_articles(&client, &f, &mut article_progress))?;
+    article_progress.finish();
+
+    f.seek(SeekFrom::Start(0))?;
+    let mut link_progress = ProgressBar::new(line_count);
+    link_progress.message("indexing links: ");
+    exec.run_until(insert_links(&client, &f, uuids, &mut link_progress))?;
+    link_progress.finish();
 
     Ok(())
 }
