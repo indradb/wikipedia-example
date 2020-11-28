@@ -15,4 +15,5 @@ futures = "0.3.5"
 async-std = { version = "1.6.4", features = ["unstable"] }
 blake2b_simd = "0.5.11"
 pbr = "^1.0.3"
+indradb-lib = "1.2.0"
 indradb-proto = "1.2.0"

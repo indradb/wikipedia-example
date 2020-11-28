@@ -733,6 +733,7 @@ dependencies = [
  "capnp",
  "capnp-rpc",
  "futures",
+ "indradb-lib",
  "indradb-proto",
  "pbr",
  "serde_json",
