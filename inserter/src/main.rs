@@ -19,7 +19,7 @@ use pbr::ProgressBar;
 
 const PORT: u16 = 27615;
 const REQUEST_BUFFER_SIZE: usize = 10_000;
-const PROMISE_BUFFER_SIZE: usize = 1000;
+const PROMISE_BUFFER_SIZE: usize = 10;
 
 struct BulkInserter<'a> {
     client: &'a service::Client,
