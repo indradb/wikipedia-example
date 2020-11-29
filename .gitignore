@@ -1,6 +1,7 @@
-venv
-data
+/venv
+/data
 __pycache__
 *.pyc
 *.pyo
 enwiki-latest-pages-articles.xml.bz2
+/target
