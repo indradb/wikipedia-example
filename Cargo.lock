@@ -725,7 +725,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "indradb-wikipedia-inserter"
+name = "indradb-wikipedia"
 version = "0.1.0"
 dependencies = [
  "async-std",
@@ -735,6 +735,7 @@ dependencies = [
  "futures",
  "indradb-lib",
  "indradb-proto",
+ "libc",
  "pbr",
  "serde_json",
  "uuid",

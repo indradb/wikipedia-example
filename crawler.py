@@ -107,10 +107,6 @@ def progress(count, total):
     sys.stdout.write("[{}] {}% | {:.0f}/{:.0f}\r".format(percent, count, total))
     sys.stdout.flush()
 
-def article_uuid(name):
-    h = hashlib.blake2b(name.encode("utf8"), digest_size=16)
-    return uuid.UUID(bytes=h.digest())
-
 def main(archive_path):
     archive_size = os.stat(archive_path).st_size
     streamer = ByteStreamer(archive_path)
