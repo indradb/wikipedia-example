@@ -70,13 +70,12 @@ impl Server {
 
         Ok(Self { 0: child })
     }
-}
 
-impl Drop for Server {
-    fn drop(&mut self) {
+    pub fn stop(&mut self) -> Result<(), Box<dyn Error>> {
         unsafe {
             libc::kill(self.0.id() as i32, libc::SIGTERM);
         }
-        self.0.wait().expect("expected process to terminate");
+        self.0.wait()?;
+        Ok(())
     }
 }

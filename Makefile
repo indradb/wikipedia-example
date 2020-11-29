@@ -9,10 +9,8 @@ venv:
 
 data: venv
 	mkdir -p data
-	. venv/bin/activate && python crawler.py enwiki-latest-pages-articles.xml.bz2
-	. venv/bin/activate && ./server.py
-	cd inserter && cargo run --release
-	. venv/bin/activate && ./server.py --stop
+	cargo build --release
+	python parse_archive.py enwiki-latest-pages-articles.xml.bz2 | cargo run --release -- crawl
 
 clean:
 	rm -rf venv data

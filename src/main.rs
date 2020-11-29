@@ -4,34 +4,41 @@ mod proc;
 
 use std::error::Error;
 use std::fs::File;
-use std::io::{BufReader, BufRead, Seek, SeekFrom};
 
 use futures::executor::LocalPool;
 use pbr::ProgressBar;
+use clap::{Arg, App, SubCommand};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let matches = App::new("IndraDB wikipedia example")
+        .about("demonstrates IndraDB with the wikipedia dataset")
+        .subcommand(SubCommand::with_name("crawl")
+            .about("inserts content from the streaming output of parse_archive.py")
+            .arg(Arg::with_name("INPUT")
+                .help("Sets the input file to use")
+                .required(true)
+                .index(1)))
+        .get_matches();
+
     let mut exec = LocalPool::new();
     let spawner = exec.spawner();
 
-    proc::Server::start()?;
+    let mut server = proc::Server::start()?;
     let client = exec.run_until(proc::retrying_client(&spawner))?;
 
-    let mut f = File::open("../data/links.txt")?;
-    let line_count = BufReader::new(&f).lines().count() as u64;
+    if let Some(matches) = matches.subcommand_matches("crawl") {
+        let f = File::open(matches.value_of("INPUT").unwrap())?;
+        let article_map = exec.run_until(crawler::read_archive(f))?;
 
-    f.seek(SeekFrom::Start(0))?;
-    let mut article_progress = ProgressBar::new(line_count);
-    article_progress.message("indexing articles: ");
-    let uuids = exec.run_until(crawler::insert_articles(&client, &f, &mut article_progress))?;
-    article_progress.finish();
-    println!();
+        exec.run_until(crawler::insert_articles(&client, &article_map))?;
 
-    f.seek(SeekFrom::Start(0))?;
-    let mut link_progress = ProgressBar::new(line_count);
-    link_progress.message("indexing links: ");
-    exec.run_until(crawler::insert_links(&client, &f, uuids, &mut link_progress))?;
-    link_progress.finish();
-    println!();
+        let mut link_progress = ProgressBar::new(article_map.len() as u64);
+        link_progress.message("indexing links: ");
+        exec.run_until(crawler::insert_links(&client, &article_map))?;
+        link_progress.finish();
+        println!();
+    }
 
+    server.stop()?;
     Ok(())
 }
