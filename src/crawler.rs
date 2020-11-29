@@ -1,7 +1,8 @@
 use std::error::Error;
 use std::fs::File;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{stdout, Write};
+use std::io::{stdout, Write, BufReader, BufRead};
+use std::str;
 
 use indradb_proto::service;
 use capnp::Error as CapnpError;
@@ -10,8 +11,8 @@ use serde_json::value::Value as JsonValue;
 use uuid::Uuid;
 use blake2b_simd::Params;
 use pbr::ProgressBar;
-use bzip2::read::BzDecoder;
-use xml::reader::{EventReader, XmlEvent};
+use bzip2::bufread::BzDecoder;
+use quick_xml::{Reader, events::Event};
 use regex::Regex;
 
 const REQUEST_BUFFER_SIZE: usize = 10_000;
@@ -130,96 +131,86 @@ enum ArchiveReadState {
 pub async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
     let mut article_map = ArticleMap::default();
     
-    let decompressor = BzDecoder::new(f);
-    let parser = EventReader::new(decompressor);
+    let f = BufReader::new(f);
+    let decompressor = BufReader::new(BzDecoder::new(f));
+    let mut reader = Reader::from_reader(decompressor);
+    let mut buf = Vec::new();
 
     let mut src: String = String::new();
     let mut content: String = String::new();
     let mut state = ArchiveReadState::Ignore;
 
-    let mut processed = 0usize;
+    let page_tag = "page".as_bytes();
+    let title_tag = "title".as_bytes();
+    let text_tag = "text".as_bytes();
+    let mut last_article_map_len = 0;
 
     let wiki_link_re = Regex::new(r"\[\[([^\[\]|]+)(|[\]]+)?\]\]").unwrap();
 
     print!("reading archive: 0");
     stdout().flush()?;
 
-    for event in parser {
-        let event = event?;
-
-        match state {
-            ArchiveReadState::Ignore => {
-                match event {
-                    XmlEvent::StartElement { name, .. } if name.local_name == "page" => {
-                        src = String::new();
-                        content = String::new();
-                        state = ArchiveReadState::Page;
-                    },
-                    _ => {}
-                }
+    loop {
+        state = match (state, reader.read_event(&mut buf)?) {
+            (ArchiveReadState::Ignore, Event::Start(ref e)) if e.name() == page_tag => {
+                src = String::new();
+                content = String::new();
+                ArchiveReadState::Page
             },
-            ArchiveReadState::Page => {
-                match event {
-                    XmlEvent::StartElement { name, .. } if name.local_name == "title" => {
-                        state = ArchiveReadState::Title;
-                    },
-                    XmlEvent::StartElement { name, .. } if name.local_name == "text" => {
-                        state = ArchiveReadState::Text;
-                    },
-                    XmlEvent::EndElement { name } if name.local_name == "page" => {
-                        content = content.trim().to_string();
-                        debug_assert!(src.len() > 0);
-                        debug_assert!(content.len() > 0);
-
-                        let blacklisted = ARTICLE_NAME_PREFIX_BLACKLIST.iter().any(|prefix| {
-                            src.starts_with(prefix)
-                        }) || content.starts_with(REDIRECT_PREFIX);
-                        if !blacklisted {
-                            let src_uuid = article_map.insert_article(&src);
-                            for cap in wiki_link_re.captures_iter(&content) {
-                                let dst = &cap[1];
-                                let dst_uuid = article_map.insert_article(dst);
-                                article_map.insert_link(src_uuid, dst_uuid);
-                            }
-                        }
-
-                        state = ArchiveReadState::Ignore;
-                    },
-                    _ => {}
-                }
+            (ArchiveReadState::Page, Event::Start(ref e)) if e.name() == title_tag => {
+                ArchiveReadState::Title
             },
-            ArchiveReadState::Title => {
-                match event {
-                    XmlEvent::Characters(s) => {
-                        src.push_str(&s);
+            (ArchiveReadState::Page, Event::Start(ref e)) if e.name() == text_tag => {
+                ArchiveReadState::Text
+            },
+            (ArchiveReadState::Page, Event::End(ref e)) if e.name() == page_tag => {
+                content = content.trim().to_string();
+                debug_assert!(src.len() > 0);
+                debug_assert!(content.len() > 0);
+
+                let blacklisted = ARTICLE_NAME_PREFIX_BLACKLIST.iter().any(|prefix| {
+                    src.starts_with(prefix)
+                }) || content.starts_with(REDIRECT_PREFIX);
+                if !blacklisted {
+                    let src_uuid = article_map.insert_article(&src);
+                    for cap in wiki_link_re.captures_iter(&content) {
+                        let dst = &cap[1];
+                        let dst_uuid = article_map.insert_article(dst);
+                        article_map.insert_link(src_uuid, dst_uuid);
                     }
-                    XmlEvent::EndElement { name } if name.local_name == "title" => {
-                        state = ArchiveReadState::Page;
-                    },
-                    _ => {}
                 }
-            },
-            ArchiveReadState::Text => {
-                match event {
-                    XmlEvent::Characters(s) => {
-                        content.push_str(&s);
-                    },
-                    XmlEvent::EndElement { name } if name.local_name == "text" => {
-                        state = ArchiveReadState::Page;
-                    },
-                    _ => {}
-                }
-            }
-        }
 
-        processed += 1;
-        if processed % 1000 == 0 {
-            print!("\rreading archive: {}", processed);
+                ArchiveReadState::Ignore
+            },
+            (ArchiveReadState::Title, Event::Text(ref e)) => {
+                src.push_str(str::from_utf8(e)?);
+                ArchiveReadState::Title
+            },
+            (ArchiveReadState::Title, Event::End(ref e)) if e.name() == title_tag => {
+                ArchiveReadState::Page
+            },
+            (ArchiveReadState::Text, Event::Text(ref e)) => {
+                content.push_str(str::from_utf8(e)?);
+                ArchiveReadState::Text
+            },
+            (ArchiveReadState::Text, Event::End(ref e)) if e.name() == text_tag => {
+                ArchiveReadState::Page
+            },
+            (_, Event::Eof) => break,
+            (state, _) => state
+        };
+
+        buf.clear();
+
+        if article_map.len() - last_article_map_len >= 1000 {
+            last_article_map_len = article_map.len();
+            print!("\rreading archive: {}", last_article_map_len);
             stdout().flush()?;
         }
     }
 
-    println!();
+    println!("reading archive: done");
+
     Ok(article_map)
 }
 
