@@ -24,12 +24,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     article_progress.message("indexing articles: ");
     let uuids = exec.run_until(crawler::insert_articles(&client, &f, &mut article_progress))?;
     article_progress.finish();
+    println!();
 
     f.seek(SeekFrom::Start(0))?;
     let mut link_progress = ProgressBar::new(line_count);
     link_progress.message("indexing links: ");
     exec.run_until(crawler::insert_links(&client, &f, uuids, &mut link_progress))?;
     link_progress.finish();
+    println!();
 
     Ok(())
 }
