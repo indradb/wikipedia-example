@@ -124,6 +124,7 @@ impl ArticleMap {
 enum ArchiveReadState {
     Ignore,
     Page,
+    MostRecentRevision,
     Title,
     Text,
 }
@@ -131,10 +132,12 @@ enum ArchiveReadState {
 pub async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
     let mut article_map = ArticleMap::default();
     
+    let mut buf = Vec::new();
     let f = BufReader::new(f);
     let decompressor = BufReader::new(BzDecoder::new(f));
     let mut reader = Reader::from_reader(decompressor);
-    let mut buf = Vec::new();
+    reader.trim_text(true);
+    reader.check_end_names(false);
 
     let mut src: String = String::new();
     let mut content: String = String::new();
@@ -143,6 +146,7 @@ pub async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
     let page_tag = "page".as_bytes();
     let title_tag = "title".as_bytes();
     let text_tag = "text".as_bytes();
+    let revision_tag = "revision".as_bytes();
     let mut last_article_map_len = 0;
 
     let wiki_link_re = Regex::new(r"\[\[([^\[\]|]+)(|[\]]+)?\]\]").unwrap();
@@ -157,13 +161,16 @@ pub async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
                 content = String::new();
                 ArchiveReadState::Page
             },
-            (ArchiveReadState::Page, Event::Start(ref e)) if e.name() == title_tag => {
+            (ArchiveReadState::Page, Event::Start(ref e)) if e.name() == revision_tag => {
+                ArchiveReadState::MostRecentRevision
+            },
+            (ArchiveReadState::MostRecentRevision, Event::Start(ref e)) if e.name() == title_tag => {
                 ArchiveReadState::Title
             },
-            (ArchiveReadState::Page, Event::Start(ref e)) if e.name() == text_tag => {
+            (ArchiveReadState::MostRecentRevision, Event::Start(ref e)) if e.name() == text_tag => {
                 ArchiveReadState::Text
             },
-            (ArchiveReadState::Page, Event::End(ref e)) if e.name() == page_tag => {
+            (ArchiveReadState::MostRecentRevision, Event::End(ref e)) if e.name() == revision_tag => {
                 content = content.trim().to_string();
                 debug_assert!(src.len() > 0);
                 debug_assert!(content.len() > 0);
@@ -187,14 +194,14 @@ pub async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
                 ArchiveReadState::Title
             },
             (ArchiveReadState::Title, Event::End(ref e)) if e.name() == title_tag => {
-                ArchiveReadState::Page
+                ArchiveReadState::MostRecentRevision
             },
             (ArchiveReadState::Text, Event::Text(ref e)) => {
                 content.push_str(str::from_utf8(e)?);
                 ArchiveReadState::Text
             },
             (ArchiveReadState::Text, Event::End(ref e)) if e.name() == text_tag => {
-                ArchiveReadState::Page
+                ArchiveReadState::MostRecentRevision
             },
             (_, Event::Eof) => break,
             (state, _) => state
