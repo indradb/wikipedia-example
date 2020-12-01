@@ -6,7 +6,6 @@ use std::error::Error;
 use std::fs::File;
 
 use futures::executor::LocalPool;
-use pbr::ProgressBar;
 use clap::{Arg, App, SubCommand};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -29,14 +28,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(matches) = matches.subcommand_matches("crawl") {
         let f = File::open(matches.value_of("INPUT").unwrap())?;
         let article_map = exec.run_until(crawler::read_archive(f))?;
-
         exec.run_until(crawler::insert_articles(&client, &article_map))?;
-
-        let mut link_progress = ProgressBar::new(article_map.len() as u64);
-        link_progress.message("indexing links: ");
         exec.run_until(crawler::insert_links(&client, &article_map))?;
-        link_progress.finish();
-        println!();
     }
 
     server.stop()?;
