@@ -11,8 +11,6 @@ from xml.etree import ElementTree
 import os
 import re
 import sys
-import uuid
-import hashlib
 
 # Pattern for finding internal links in wikitext
 WIKI_LINK_PATTERN = re.compile(r"\[\[([^\[\]|]+)(|[\]]+)?\]\]")
@@ -106,10 +104,6 @@ def progress(count, total):
     sys.stdout.write(ERASE_LINE)
     sys.stdout.write("[{}] {}% | {:.0f}/{:.0f}\r".format(percent, count, total))
     sys.stdout.flush()
-
-def article_uuid(name):
-    h = hashlib.blake2b(name.encode("utf8"), digest_size=16)
-    return uuid.UUID(bytes=h.digest())
 
 def main(archive_path):
     archive_size = os.stat(archive_path).st_size
