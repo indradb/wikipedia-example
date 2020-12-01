@@ -3,7 +3,7 @@ This application will:
 
 1) Decompress/parse a bzipped archive of wikipedia article data-on-the-fly
 2) Find all the links in the article content to other wiki articles
-3) Write the results to a TSV file
+3) Write the results to a file
 """
 
 import bz2
@@ -11,6 +11,8 @@ from xml.etree import ElementTree
 import os
 import re
 import sys
+
+PROGRESS_BAR_LENGTH = 55
 
 # Pattern for finding internal links in wikitext
 WIKI_LINK_PATTERN = re.compile(r"\[\[([^\[\]|]+)(|[\]]+)?\]\]")
@@ -95,14 +97,11 @@ def iterate_page_links(streamer):
         pass
 
 def progress(count, total):
-    # convert to mb
-    count /= (1024 * 1024)
-    total /= (1024 * 1024)
-
+    filled_len = int(round(PROGRESS_BAR_LENGTH * count / float(total)))
     percent = round(100.0 * count / float(total), 1)
-
+    bar = "#" * filled_len + " " * (PROGRESS_BAR_LENGTH - filled_len)
     sys.stdout.write(ERASE_LINE)
-    sys.stdout.write("[{}] {}% | {:.0f}/{:.0f}\r".format(percent, count, total))
+    sys.stdout.write("[{}] {}% | {:.0f}/{:.0f}\r".format(bar, percent, count, total))
     sys.stdout.flush()
 
 def main(archive_path):
@@ -112,7 +111,7 @@ def main(archive_path):
 
     with open("data/links.txt", "w") as f:
         for (src, dst) in iterate_page_links(streamer):
-            progress(streamer.read_bytes, archive_size)
+            progress(streamer.read_bytes / 1024 / 1024, archive_size / 1024 / 1024)
 
             if src != cur_src:
                 f.write(src + "\n")
