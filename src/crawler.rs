@@ -164,7 +164,7 @@ pub async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
             (ArchiveReadState::Page, Event::Start(ref e)) if e.name() == revision_tag => {
                 ArchiveReadState::MostRecentRevision
             },
-            (ArchiveReadState::MostRecentRevision, Event::Start(ref e)) if e.name() == title_tag => {
+            (ArchiveReadState::Page, Event::Start(ref e)) if e.name() == title_tag => {
                 ArchiveReadState::Title
             },
             (ArchiveReadState::MostRecentRevision, Event::Start(ref e)) if e.name() == text_tag => {
@@ -194,7 +194,7 @@ pub async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
                 ArchiveReadState::Title
             },
             (ArchiveReadState::Title, Event::End(ref e)) if e.name() == title_tag => {
-                ArchiveReadState::MostRecentRevision
+                ArchiveReadState::Page
             },
             (ArchiveReadState::Text, Event::Text(ref e)) => {
                 content.push_str(str::from_utf8(e)?);
