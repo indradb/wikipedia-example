@@ -1,3 +1,0 @@
-tornado==4.4.2
-Cython==0.29
-indradb==1.0.1

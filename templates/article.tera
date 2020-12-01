@@ -19,8 +19,8 @@
         {% for edge_id in inbound_edge_ids %}
             <tr>
                 <td>{{ edge_id }}</td>
-                <td><a href="/?article={{ url_escape(inbound_edge_names[edge_id]) }}&action=get_article">{{ inbound_edge_names[edge_id] }}</a></td>
+                <td><a href="/?article={{ inbound_edge_names[edge_id] | urlencode }}&action=get_article">{{ inbound_edge_names[edge_id] }}</a></td>
             </tr>
-        {% end %}
+        {% endfor %}
     </table>
-{% end %}
+{% endif %}

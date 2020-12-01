@@ -1,15 +1,16 @@
 use std::error::Error;
 use std::fs::File;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{stdout, Write, BufReader, BufRead};
+use std::io::{stdout, Write, BufReader};
 use std::str;
+
+use crate::util;
 
 use indradb_proto::service;
 use capnp::Error as CapnpError;
 use capnp::capability::{Promise, Response};
 use serde_json::value::Value as JsonValue;
 use uuid::Uuid;
-use blake2b_simd::Params;
 use pbr::ProgressBar;
 use bzip2::bufread::BzDecoder;
 use quick_xml::{Reader, events::Event};
@@ -78,45 +79,34 @@ impl<'a> BulkInserter<'a> {
 }
 
 pub struct ArticleMap {
-    uuids_to_names: HashMap<Uuid, String>,
-    names_to_uuids: HashMap<String, Uuid>,
-    links: HashMap<Uuid, HashSet<Uuid>>,
-    hasher: blake2b_simd::Params
+    uuids: HashMap<String, Uuid>,
+    links: HashMap<Uuid, HashSet<Uuid>>
 }
 
 impl Default for ArticleMap {
     fn default() -> Self {
-        let mut params = Params::new();
-        params.hash_length(16);
+        
 
         Self {
-            uuids_to_names: HashMap::default(),
-            names_to_uuids: HashMap::default(),
+            uuids: HashMap::default(),
             links: HashMap::default(),
-            hasher: params,
         }
     }
 }
 
 impl ArticleMap {
-    pub fn len(&self) -> usize {
-        self.uuids_to_names.len()
-    }
-
     fn insert_article(&mut self, name: &str) -> Uuid {
-        if let Some(&uuid) = self.names_to_uuids.get(name) {
+        if let Some(&uuid) = self.uuids.get(name) {
             return uuid;
         }
 
-        let hash = self.hasher.hash(name.as_bytes());
-        let uuid = Uuid::from_slice(hash.as_bytes()).unwrap();
-        self.uuids_to_names.insert(uuid, name.to_string());
-        self.names_to_uuids.insert(name.to_string(), uuid);
+        let uuid = util::article_uuid(name);
+        self.uuids.insert(name.to_string(), uuid);
         uuid
     }
 
     fn insert_link(&mut self, src_uuid: Uuid, dst_uuid: Uuid) {
-        let container = self.links.entry(src_uuid).or_insert_with(|| HashSet::default());
+        let container = self.links.entry(src_uuid).or_insert_with(HashSet::default);
         container.insert(dst_uuid);
     }
 }
@@ -172,33 +162,46 @@ pub async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
             },
             (ArchiveReadState::MostRecentRevision, Event::End(ref e)) if e.name() == revision_tag => {
                 content = content.trim().to_string();
-                debug_assert!(src.len() > 0);
-                debug_assert!(content.len() > 0);
+                debug_assert!(!src.is_empty());
+                debug_assert!(!content.is_empty());
 
-                let blacklisted = ARTICLE_NAME_PREFIX_BLACKLIST.iter().any(|prefix| {
-                    src.starts_with(prefix)
-                }) || content.starts_with(REDIRECT_PREFIX);
-                if !blacklisted {
-                    let src_uuid = article_map.insert_article(&src);
-                    for cap in wiki_link_re.captures_iter(&content) {
-                        let dst = &cap[1];
-                        let dst_uuid = article_map.insert_article(dst);
-                        article_map.insert_link(src_uuid, dst_uuid);
-                    }
+                let src_uuid = article_map.insert_article(&src);
+                for cap in wiki_link_re.captures_iter(&content) {
+                    let dst = &cap[1];
+                    let dst_uuid = article_map.insert_article(dst);
+                    article_map.insert_link(src_uuid, dst_uuid);
                 }
 
                 ArchiveReadState::Ignore
             },
             (ArchiveReadState::Title, Event::Text(ref e)) => {
+                debug_assert!(src.is_empty());
                 src.push_str(str::from_utf8(e)?);
-                ArchiveReadState::Title
+
+                let blacklisted = ARTICLE_NAME_PREFIX_BLACKLIST.iter().any(|prefix| {
+                    src.starts_with(prefix)
+                });
+
+                if blacklisted {
+                    ArchiveReadState::Ignore
+                } else {
+                    ArchiveReadState::Title
+                }
             },
             (ArchiveReadState::Title, Event::End(ref e)) if e.name() == title_tag => {
                 ArchiveReadState::Page
             },
             (ArchiveReadState::Text, Event::Text(ref e)) => {
+                debug_assert!(content.is_empty());
                 content.push_str(str::from_utf8(e)?);
-                ArchiveReadState::Text
+
+                let blacklisted = content.starts_with(REDIRECT_PREFIX);
+
+                if blacklisted {
+                    ArchiveReadState::Ignore
+                } else {
+                    ArchiveReadState::Text
+                }
             },
             (ArchiveReadState::Text, Event::End(ref e)) if e.name() == text_tag => {
                 ArchiveReadState::MostRecentRevision
@@ -209,26 +212,26 @@ pub async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
 
         buf.clear();
 
-        if article_map.len() - last_article_map_len >= 1000 {
-            last_article_map_len = article_map.len();
+        if article_map.uuids.len() - last_article_map_len >= 1000 {
+            last_article_map_len = article_map.uuids.len();
             print!("\rreading archive: {}", last_article_map_len);
             stdout().flush()?;
         }
     }
 
-    println!("reading archive: done");
+    println!("\rreading archive: done");
 
     Ok(article_map)
 }
 
 pub async fn insert_articles(client: &service::Client, article_map: &ArticleMap) -> Result<(), Box<dyn Error>> {
-    let mut progress = ProgressBar::new(article_map.len() as u64);
+    let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
     progress.message("indexing articles: ");
 
     let mut inserter = BulkInserter::new(client);
     let article_type = indradb::Type::new("article").unwrap();
 
-    for (article_name, article_uuid) in &article_map.names_to_uuids {
+    for (article_name, article_uuid) in &article_map.uuids {
         inserter.push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(*article_uuid, article_type.clone()))).await?;
         inserter.push(indradb::BulkInsertItem::VertexProperty(*article_uuid, "name".to_string(), JsonValue::String(article_name.clone()))).await?;
         progress.inc();
@@ -241,7 +244,7 @@ pub async fn insert_articles(client: &service::Client, article_map: &ArticleMap)
 }
 
 pub async fn insert_links(client: &service::Client, article_map: &ArticleMap) -> Result<(), Box<dyn Error>> {
-    let mut progress = ProgressBar::new(article_map.len() as u64);
+    let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
     progress.message("indexing links: ");
 
     let mut inserter = BulkInserter::new(client);

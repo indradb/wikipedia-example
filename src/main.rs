@@ -1,14 +1,23 @@
+#![feature(proc_macro_hygiene, decl_macro)]
+
+#[macro_use] extern crate rocket;
+#[macro_use] extern crate lazy_static;
+
 mod crawler;
 mod explorer;
-mod proc;
+mod util;
 
 use std::error::Error;
 use std::fs::File;
 
-use futures::executor::LocalPool;
 use clap::{Arg, App, SubCommand};
+use rocket_contrib::templates::Template;
+use tokio::task;
+use indradb_proto::service;
+use capnp::Error as CapnpError;
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main(flavor = "current_thread")]
+pub async fn main() -> Result<(), Box<dyn Error>> {
     let matches = App::new("IndraDB wikipedia example")
         .about("demonstrates IndraDB with the wikipedia dataset")
         .subcommand(SubCommand::with_name("crawl")
@@ -17,19 +26,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .help("Sets the input file to use")
                 .required(true)
                 .index(1)))
+        .subcommand(SubCommand::with_name("explore")
+            .about("runs the explorer"))
         .get_matches();
 
-    let mut exec = LocalPool::new();
-    let spawner = exec.spawner();
-
-    let mut server = proc::Server::start()?;
-    let client = exec.run_until(proc::retrying_client(&spawner))?;
+    let mut server = util::Server::start()?;
 
     if let Some(matches) = matches.subcommand_matches("crawl") {
+        let client = task::LocalSet::new().run_until(util::retrying_client()).await?;
         let f = File::open(matches.value_of("INPUT").unwrap())?;
-        let article_map = exec.run_until(crawler::read_archive(f))?;
-        exec.run_until(crawler::insert_articles(&client, &article_map))?;
-        exec.run_until(crawler::insert_links(&client, &article_map))?;
+        let article_map = crawler::read_archive(f).await?;
+        crawler::insert_articles(&client, &article_map).await?;
+        crawler::insert_links(&client, &article_map).await?;
+    } else if let Some(_) = matches.subcommand_matches("explore") {
+        rocket::ignite()
+            .attach(Template::fairing())
+            .mount("/", routes![explorer::index, explorer::article]).launch();
     }
 
     server.stop()?;

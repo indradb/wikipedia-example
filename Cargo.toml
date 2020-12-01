@@ -12,7 +12,6 @@ uuid = "0.8.1"
 capnp = "0.13.3"
 capnp-rpc = "0.13.1"
 futures = "0.3.5"
-async-std = { version = "1.6.4", features = ["unstable"] }
 blake2b_simd = "0.5.11"
 pbr = "1"
 indradb-lib = "1.2.0"
@@ -22,3 +21,13 @@ clap = "2"
 bzip2 = "0.4.1"
 quick-xml = "0.20.0"
 regex = "1"
+rocket = "0.4.6"
+serde = { version = "1", features = ["derive"] }
+lazy_static = "1"
+tokio = { version = "0.3.5", features = ["rt", "net", "macros", "time"]}
+tokio-util = { version = "0.5.0", features = ["compat"] }
+
+[dependencies.rocket_contrib]
+version = "0.4.6"
+default-features = false
+features = ["tera_templates"]
