@@ -8,13 +8,10 @@ mod explorer;
 mod util;
 
 use std::error::Error;
-use std::fs::File;
 
 use clap::{Arg, App, SubCommand};
 use rocket_contrib::templates::Template;
 use tokio::task;
-use indradb_proto::service;
-use capnp::Error as CapnpError;
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() -> Result<(), Box<dyn Error>> {
@@ -22,10 +19,14 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         .about("demonstrates IndraDB with the wikipedia dataset")
         .subcommand(SubCommand::with_name("crawl")
             .about("inserts content from the streaming output of parse_archive.py")
-            .arg(Arg::with_name("INPUT")
-                .help("Sets the input file to use")
+            .arg(Arg::with_name("ARCHIVE_INPUT")
+                .help("Sets the input archive file to use")
                 .required(true)
-                .index(1)))
+                .index(1))
+            .arg(Arg::with_name("ARCHIVE_DUMP")
+                .help("Sets the path of the archive cache dump")
+                .required(true)
+                .index(2)))
         .subcommand(SubCommand::with_name("explore")
             .about("runs the explorer"))
         .get_matches();
@@ -34,8 +35,11 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
 
     if let Some(matches) = matches.subcommand_matches("crawl") {
         let client = task::LocalSet::new().run_until(util::retrying_client()).await?;
-        let f = File::open(matches.value_of("INPUT").unwrap())?;
-        let article_map = crawler::read_archive(f).await?;
+
+        let article_map = crawler::load_article_map(
+            matches.value_of("ARCHIVE_INPUT").unwrap(),
+            matches.value_of("ARCHIVE_DUMP").unwrap(),
+        ).await?;
         crawler::insert_articles(&client, &article_map).await?;
         crawler::insert_links(&client, &article_map).await?;
     } else if let Some(_) = matches.subcommand_matches("explore") {

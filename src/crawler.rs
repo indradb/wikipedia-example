@@ -3,6 +3,7 @@ use std::fs::File;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{stdout, Write, BufReader};
 use std::str;
+use std::path::Path;
 
 use crate::util;
 
@@ -15,6 +16,7 @@ use pbr::ProgressBar;
 use bzip2::bufread::BzDecoder;
 use quick_xml::{Reader, events::Event};
 use regex::Regex;
+use serde::{Serialize, Deserialize};
 
 const REQUEST_BUFFER_SIZE: usize = 10_000;
 const PROMISE_BUFFER_SIZE: usize = 10;
@@ -78,6 +80,8 @@ impl<'a> BulkInserter<'a> {
     }
 }
 
+// TODO: investigate memory/speed tradeoff of BTreeMap vs HashMap here
+#[derive(Serialize, Deserialize)]
 pub struct ArticleMap {
     uuids: HashMap<String, Uuid>,
     links: HashMap<Uuid, HashSet<Uuid>>
@@ -85,8 +89,6 @@ pub struct ArticleMap {
 
 impl Default for ArticleMap {
     fn default() -> Self {
-        
-
         Self {
             uuids: HashMap::default(),
             links: HashMap::default(),
@@ -222,6 +224,20 @@ pub async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
     println!("\rreading archive: done");
 
     Ok(article_map)
+}
+
+pub async fn load_article_map(input_filepath: &str, dump_filepath: &str) -> Result<ArticleMap, Box<dyn Error>> {
+    if Path::new(dump_filepath).exists() {
+        print!("reading dump...");
+        stdout().flush()?;
+        let article_map = bincode::deserialize_from(File::open(dump_filepath)?)?;
+        println!("\rreading dump: done");
+        Ok(article_map)
+    } else {
+        let article_map = read_archive(File::open(input_filepath)?).await?;
+        bincode::serialize_into(File::create(dump_filepath)?, &article_map)?;
+        Ok(article_map)
+    }
 }
 
 pub async fn insert_articles(client: &service::Client, article_map: &ArticleMap) -> Result<(), Box<dyn Error>> {
