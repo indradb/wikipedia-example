@@ -33,21 +33,27 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut server = util::Server::start()?;
 
-    if let Some(matches) = matches.subcommand_matches("crawl") {
-        let client = task::LocalSet::new().run_until(util::retrying_client()).await?;
+    let job_result: Result<(), Box<dyn Error>> = task::LocalSet::new().run_until(async move {
+        if let Some(matches) = matches.subcommand_matches("crawl") {
+            let client = util::retrying_client().await?;
+            let article_map = crawler::load_article_map(
+                matches.value_of("ARCHIVE_INPUT").unwrap(),
+                matches.value_of("ARCHIVE_DUMP").unwrap(),
+            ).await?;
+            crawler::insert_articles(&client, &article_map).await?;
+            crawler::insert_links(&client, &article_map).await?;
+        } else if let Some(_) = matches.subcommand_matches("explore") {
+            rocket::ignite()
+                .attach(Template::fairing())
+                .mount("/", routes![explorer::index, explorer::article]).launch();
+        } else {
+            panic!("unknown command");
+        };
+        Ok(())
+    }).await;
 
-        let article_map = crawler::load_article_map(
-            matches.value_of("ARCHIVE_INPUT").unwrap(),
-            matches.value_of("ARCHIVE_DUMP").unwrap(),
-        ).await?;
-        crawler::insert_articles(&client, &article_map).await?;
-        crawler::insert_links(&client, &article_map).await?;
-    } else if let Some(_) = matches.subcommand_matches("explore") {
-        rocket::ignite()
-            .attach(Template::fairing())
-            .mount("/", routes![explorer::index, explorer::article]).launch();
-    }
-
-    server.stop()?;
+    let stop_result = server.stop();
+    job_result?;
+    stop_result?;
     Ok(())
 }
