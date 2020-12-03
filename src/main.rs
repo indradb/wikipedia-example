@@ -1,6 +1,3 @@
-#![feature(proc_macro_hygiene, decl_macro)]
-
-#[macro_use] extern crate rocket;
 #[macro_use] extern crate lazy_static;
 
 mod crawler;
@@ -10,7 +7,6 @@ mod util;
 use std::error::Error;
 
 use clap::{Arg, App, SubCommand};
-use rocket_contrib::templates::Template;
 use tokio::task;
 
 #[tokio::main(flavor = "current_thread")]
@@ -43,9 +39,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             crawler::insert_articles(&client, &article_map).await?;
             crawler::insert_links(&client, &article_map).await?;
         } else if let Some(_) = matches.subcommand_matches("explore") {
-            rocket::ignite()
-                .attach(Template::fairing())
-                .mount("/", routes![explorer::index, explorer::article]).launch();
+            explorer::run().await?;
         } else {
             panic!("unknown command");
         };

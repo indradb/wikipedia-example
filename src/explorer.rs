@@ -1,74 +1,156 @@
+use std::collections::HashMap;
+use std::error::Error as StdError;
+use std::fmt::{Debug, Formatter, Error as FmtError};
+use std::u32;
+
 use crate::util;
 
-use indradb_proto::service;
-use rocket_contrib::templates::Template;
-use rocket::http::RawStr;
+use indradb::{VertexQueryExt, EdgeQueryExt};
+use indradb_proto::util as proto_util;
 use serde::Serialize;
+use warp::Filter;
+use tera::Tera;
+use capnp::Error as CapnpError;
 
-#[derive(Serialize)]
-struct IndexArguments;
+const INDEX: &str = r#"
+<form method="get" action="/article">
+    <input name="name" value="" type="text" />
+    <button type="submit" name="action" value="get_article">Get Article</button>
+</form>
+"#;
 
-#[get("/")]
-pub fn index() -> Template {
-    Template::render("index", IndexArguments)
+const ARTICLE_TEMPLATE: &str = r#"
+<h1>{{ article_name }}</h1>
+
+<h3>Properties</h3>
+
+<ul>
+    <li>id: {{ article_id }}</li>
+    <li>type: {{ vertex_data.t }}</li>
+    <li>edge count: {{ edge_count }}</li>
+</ul>
+
+{% if inbound_edge_ids %}
+    <h3>Edges</h3>
+
+    <table>
+        <tr>
+            <th>id</th>
+            <th>name</th>
+        </tr>
+        {% for edge_id in inbound_edge_ids %}
+            <tr>
+                <td>{{ edge_id }}</td>
+                <td><a href="/?article={{ inbound_edge_names[edge_id] | urlencode }}&action=get_article">{{ inbound_edge_names[edge_id] }}</a></td>
+            </tr>
+        {% endfor %}
+    </table>
+{% endif %}
+"#;
+
+lazy_static! {
+    static ref TEMPLATES: Tera = {
+        let mut tera = Tera::default();
+        tera.add_raw_template("article.tera", ARTICLE_TEMPLATE);
+        tera
+    };
 }
 
-// def get_article(self, article_name):
-//     # Get the ID of the article we want from its name
-//     article_id = article_uuid(article_name)
+#[derive(Debug)]
+struct ServerError {
+    message: String
+}
+impl warp::reject::Reject for ServerError {}
 
-//     # Get all of the data we want from IndraDB in a single
-//     # request/transaction
-//     vertex_query = indradb.SpecificVertexQuery(article_id)
-//     trans = self.client.transaction()
+fn map_err<T, E: StdError>(result: Result<T, E>) -> Result<T, warp::Rejection> {
+    result.map_err(|err| {
+        warp::reject::custom(ServerError { message: format!("{}", err) })
+    })
+}
 
-//     vertex_data, edge_count, edge_data = capnp.join_promises([
-//         trans.get_vertices(vertex_query),
-//         trans.get_edge_count(article_id, None, "outbound"),
-//         trans.get_edges(vertex_query.outbound(EDGE_LIMIT).t("link")),
-//     ]).wait()
+async fn article(query: HashMap<String, String>) -> Result<impl warp::Reply, warp::Rejection> {
+    let name_default = "".to_string();
+    let name = query.get("name").unwrap_or(&name_default);
+    let article_id = util::article_uuid(&name);
+    let vertex_query = indradb::SpecificVertexQuery::single(article_id);
 
-//     if len(vertex_data) == 0:
-//         raise HTTPError(404)
+    // TODO: make this middleware
+    let client = map_err(util::retrying_client().await)?;
 
-//     name_data = trans.get_vertex_properties(indradb.SpecificEdgeQuery(*[e.key for e in edge_data]).inbound(EDGE_LIMIT).property("name")).wait()
+    let trans = client.transaction_request().send().pipeline.get_transaction();
     
-//     inbound_edge_ids = [e.key.inbound_id for e in edge_data]
-//     inbound_edge_names = {p.id: p.value for p in name_data}
+    let vertex_data_future = {
+        let mut req = trans.get_vertices_request();
+        proto_util::from_vertex_query(&vertex_query.clone().into(), req.get().init_q());
+        req.send().promise
+    };
 
-//     self.render(
-//         "article.html",
-//         article_name=article_name,
-//         article_id=article_id,
-//         vertex_data=vertex_data[0],
-//         edge_count=edge_count,
-//         inbound_edge_ids=inbound_edge_ids,
-//         inbound_edge_names=inbound_edge_names,
-//     )
+    let edge_count_future = {
+        let mut req = trans.get_edge_count_request();
+        req.get().set_id(article_id.as_bytes());
+        req.get().set_direction(proto_util::from_edge_direction(indradb::EdgeDirection::Outbound));
+        req.send().promise
+    };
 
+    let edges_future = {
+        let mut req = trans.get_edges_request();
+        proto_util::from_edge_query(&vertex_query.outbound(u32::MAX).into(), req.get().init_q());
+        req.send().promise
+    };
 
-#[derive(Serialize)]
-struct ArticleArguments {
-    // article_name: String,
-    // article_id: Uuid,
-    // edge_count: u64,
-    // vertex_data: ...,
-    // inbound_edge_ids: ...,
+    let vertex_data = {
+        let res = map_err(vertex_data_future.await)?;
+        let list = map_err(map_err(res.get())?.get_result())?;
+        let list: Result<Vec<indradb::Vertex>, CapnpError> =
+            list.into_iter().map(|reader| proto_util::to_vertex(&reader)).collect();
+        map_err(list)?
+    };
+
+    if vertex_data.len() == 0 {
+        return Err(warp::reject::not_found());
+    }
+    
+    let edge_count = {
+        let res = map_err(edge_count_future.await)?;
+        map_err(res.get())?.get_result()
+    };
+
+    let edges = {
+        let res = map_err(edges_future.await)?;
+        let list = map_err(map_err(res.get())?.get_result())?;
+        let list: Result<Vec<indradb::Edge>, CapnpError> =
+            list.into_iter().map(|reader| proto_util::to_edge(&reader)).collect();
+        map_err(list)?
+    };
+
+    let name_data = {
+        let mut req = trans.get_vertex_properties_request();
+        let q = indradb::VertexPropertyQuery::new(
+            indradb::SpecificVertexQuery::new(edges.iter().map(|e| e.key.inbound_id).collect()).into(),
+            "name"
+        );
+        proto_util::from_vertex_property_query(&q.into(), req.get().init_q());
+        let res = map_err(req.send().promise.await)?;
+        let list = map_err(map_err(res.get())?.get_result())?;
+        let list: Result<Vec<indradb::VertexProperty>, CapnpError> = list
+            .into_iter()
+            .map(|reader| proto_util::to_vertex_property(&reader))
+            .collect();
+        map_err(list)?
+    };
+
+    todo!();
 }
 
-#[get("/article?<name>")]
-pub fn article(name: &RawStr) -> Template {
-    // let article_id = util::article_uuid(name);
-    // let vertex_query = indradb::SpecificVertexQuery { ids: vec![article_id] };
+pub async fn run() {
+    let index = warp::get()
+        .and(warp::path(""))
+        .map(|| INDEX);
 
-    // let mut req = self.client.bulk_insert_request();
-    // indradb_proto::util::from_bulk_insert_items(
-    //     &self.buf,
-    //     req.get().init_items(self.buf.len() as u32)
-    // )?;
+    let article = warp::get()
+        .and(warp::path("article"))
+        .and(warp::query::<HashMap<String, String>>())
+        .and_then(article);
 
-    // Template::render("article", ArticleArguments {
-    //     //
-    // })
-    Template::render("index", IndexArguments)
+    warp::serve(index.or(article)).run(([127, 0, 0, 1], 8000)).await;
 }
