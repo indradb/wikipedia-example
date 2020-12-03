@@ -1,16 +1,12 @@
-explorer: venv data
-	. venv/bin/activate && ./server.py
-	. venv/bin/activate && python explorer.py
-	. venv/bin/activate && ./server.py --stop
+.PHONY: explorer clean
 
-venv:
-	virtualenv -p python3 venv
-	. venv/bin/activate && pip install -r requirements.txt
+explorer: data
+	cargo run --bin explorer --release
 
-data: venv
+data:
 	mkdir -p data
 	cargo build --release
-	cargo run --bin crawler --release -- enwiki-latest-pages-articles.xml.bz2 data/archive_dump.bincode
+	time cargo run --bin crawler --release -- enwiki-latest-pages-articles.xml.bz2 data/archive_dump.bincode
 
 clean:
 	rm -rf venv data
