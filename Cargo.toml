@@ -26,5 +26,6 @@ lazy_static = "1"
 tokio = { version = "0.3.5", features = ["rt", "net", "macros", "time"]}
 tokio-util = { version = "0.5.0", features = ["compat"] }
 bincode = "1.3.1"
-warp = "0.2.5"
+actix-web = "3"
 tera = "1"
+derive_more = "0.99.11"

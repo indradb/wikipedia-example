@@ -1,16 +1,15 @@
-use std::collections::HashMap;
 use std::error::Error as StdError;
-use std::fmt::{Debug, Formatter, Error as FmtError};
 use std::u32;
 
 use crate::util;
 
 use indradb::{VertexQueryExt, EdgeQueryExt};
 use indradb_proto::util as proto_util;
-use serde::Serialize;
-use warp::Filter;
-use tera::Tera;
+use tera::{Tera, Context};
 use capnp::Error as CapnpError;
+use actix_web::{web, App, HttpServer, error, http::StatusCode, HttpResponse, http::header, dev::HttpResponseBuilder};
+use serde::{Serialize, Deserialize};
+use derive_more::{Display, Error};
 
 const INDEX: &str = r#"
 <form method="get" action="/article">
@@ -26,11 +25,10 @@ const ARTICLE_TEMPLATE: &str = r#"
 
 <ul>
     <li>id: {{ article_id }}</li>
-    <li>type: {{ vertex_data.t }}</li>
     <li>edge count: {{ edge_count }}</li>
 </ul>
 
-{% if inbound_edge_ids %}
+{% if inbound_edges %}
     <h3>Edges</h3>
 
     <table>
@@ -38,44 +36,80 @@ const ARTICLE_TEMPLATE: &str = r#"
             <th>id</th>
             <th>name</th>
         </tr>
-        {% for edge_id in inbound_edge_ids %}
+        {% for (edge_id, edge_name) in inbound_edges %}
             <tr>
                 <td>{{ edge_id }}</td>
-                <td><a href="/?article={{ inbound_edge_names[edge_id] | urlencode }}&action=get_article">{{ inbound_edge_names[edge_id] }}</a></td>
+                <td><a href="/?article={{ edge_name | urlencode }}&action=get_article">{{ edge_name }}</a></td>
             </tr>
         {% endfor %}
     </table>
 {% endif %}
 "#;
 
-lazy_static! {
-    static ref TEMPLATES: Tera = {
-        let mut tera = Tera::default();
-        tera.add_raw_template("article.tera", ARTICLE_TEMPLATE);
-        tera
-    };
+struct AppState {
+    templates: Tera
 }
 
-#[derive(Debug)]
-struct ServerError {
-    message: String
-}
-impl warp::reject::Reject for ServerError {}
-
-fn map_err<T, E: StdError>(result: Result<T, E>) -> Result<T, warp::Rejection> {
-    result.map_err(|err| {
-        warp::reject::custom(ServerError { message: format!("{}", err) })
-    })
+impl AppState {
+    fn new() -> Result<Self, Box<dyn StdError>> {
+        let mut templates = Tera::default();
+        templates.add_raw_template("article.tera", ARTICLE_TEMPLATE)?;
+        Ok(AppState { templates })
+    }
 }
 
-async fn article(query: HashMap<String, String>) -> Result<impl warp::Reply, warp::Rejection> {
-    let name_default = "".to_string();
-    let name = query.get("name").unwrap_or(&name_default);
-    let article_id = util::article_uuid(&name);
+#[derive(Debug, Display, Error)]
+enum Error {
+    #[display(fmt = "capnp error: {}", err)]
+    Capnp { err: CapnpError },
+    #[display(fmt = "article not found: {}", name)]
+    ArticleNotFound { name: String }
+}
+
+impl From<CapnpError> for Error {
+    fn from(err: CapnpError) -> Self {
+        Error::Capnp { err }
+    }
+}
+
+impl error::ResponseError for Error {
+    fn error_response(&self) -> HttpResponse {
+        HttpResponseBuilder::new(self.status_code())
+            .set_header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .body(self.to_string())
+    }
+
+    fn status_code(&self) -> StatusCode {
+        match self {
+            Error::Capnp { err: _ } => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::ArticleNotFound { name: _ } => StatusCode::NOT_FOUND
+        }
+    }
+}
+
+async fn index() -> &'static str {
+    INDEX
+}
+
+#[derive(Deserialize)]
+struct ArticleQueryParams {
+    name: String
+}
+
+#[derive(Serialize)]
+struct ArticleTemplateArgs {
+    article_name: String,
+    article_id: String,
+    edge_count: u64,
+    inbound_edges: Vec<(String, String)>
+}
+
+async fn article(state: web::Data<AppState>, web::Query(query): web::Query<ArticleQueryParams>) -> Result<String, Error> {
+    let article_id = util::article_uuid(&query.name);
     let vertex_query = indradb::SpecificVertexQuery::single(article_id);
 
     // TODO: make this middleware
-    let client = map_err(util::retrying_client().await)?;
+    let client = util::retrying_client().await?;
 
     let trans = client.transaction_request().send().pipeline.get_transaction();
     
@@ -99,28 +133,28 @@ async fn article(query: HashMap<String, String>) -> Result<impl warp::Reply, war
     };
 
     let vertex_data = {
-        let res = map_err(vertex_data_future.await)?;
-        let list = map_err(map_err(res.get())?.get_result())?;
+        let res = vertex_data_future.await?;
+        let list = res.get()?.get_result()?;
         let list: Result<Vec<indradb::Vertex>, CapnpError> =
             list.into_iter().map(|reader| proto_util::to_vertex(&reader)).collect();
-        map_err(list)?
+        list?
     };
 
     if vertex_data.len() == 0 {
-        return Err(warp::reject::not_found());
+        return Err(Error::ArticleNotFound { name: query.name.clone() });
     }
     
     let edge_count = {
-        let res = map_err(edge_count_future.await)?;
-        map_err(res.get())?.get_result()
+        let res = edge_count_future.await?;
+        res.get()?.get_result()
     };
 
     let edges = {
-        let res = map_err(edges_future.await)?;
-        let list = map_err(map_err(res.get())?.get_result())?;
+        let res = edges_future.await?;
+        let list = res.get()?.get_result()?;
         let list: Result<Vec<indradb::Edge>, CapnpError> =
             list.into_iter().map(|reader| proto_util::to_edge(&reader)).collect();
-        map_err(list)?
+        list?
     };
 
     let name_data = {
@@ -130,27 +164,31 @@ async fn article(query: HashMap<String, String>) -> Result<impl warp::Reply, war
             "name"
         );
         proto_util::from_vertex_property_query(&q.into(), req.get().init_q());
-        let res = map_err(req.send().promise.await)?;
-        let list = map_err(map_err(res.get())?.get_result())?;
+        let res = req.send().promise.await?;
+        let list = res.get()?.get_result()?;
         let list: Result<Vec<indradb::VertexProperty>, CapnpError> = list
             .into_iter()
             .map(|reader| proto_util::to_vertex_property(&reader))
             .collect();
-        map_err(list)?
+        list?
     };
 
-    todo!();
+    let template_context = Context::from_serialize(&ArticleTemplateArgs {
+        article_name: query.name,
+        article_id: article_id.to_string(),
+        edge_count: edge_count,
+        inbound_edges: name_data.iter().map(|p| (p.id.to_string(), p.value.to_string())).collect()
+    }).unwrap();
+    let rendered = state.templates.render("article.tera", &template_context).unwrap();
+    Ok(rendered)
 }
 
-pub async fn run() {
-    let index = warp::get()
-        .and(warp::path(""))
-        .map(|| INDEX);
-
-    let article = warp::get()
-        .and(warp::path("article"))
-        .and(warp::query::<HashMap<String, String>>())
-        .and_then(article);
-
-    warp::serve(index.or(article)).run(([127, 0, 0, 1], 8000)).await;
+pub async fn run() -> Result<(), Box<dyn StdError>> {
+    HttpServer::new(|| {
+        App::new()
+            .data(AppState::new())
+            .route("/", web::get().to(index))
+            .route("/article", web::get().to(article))
+    }).bind("127.0.0.1:8080")?.run().await?;
+    Ok(())
 }
