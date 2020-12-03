@@ -7,13 +7,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78d1833b3838dbe990df0f1f87baf640cf6146e898166afe401839d1b001e570"
 dependencies = [
  "bitflags",
- "bytes 0.5.6",
+ "bytes",
  "futures-core",
  "futures-sink",
  "log",
  "pin-project 0.4.27",
- "tokio 0.2.23",
- "tokio-util 0.3.1",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -50,7 +50,7 @@ dependencies = [
  "base64",
  "bitflags",
  "brotli2",
- "bytes 0.5.6",
+ "bytes",
  "cookie",
  "copyless",
  "derive_more",
@@ -117,7 +117,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "smallvec",
- "tokio 0.2.23",
+ "tokio",
 ]
 
 [[package]]
@@ -133,7 +133,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "log",
- "mio 0.6.22",
+ "mio",
  "mio-uds",
  "num_cpus",
  "slab",
@@ -201,7 +201,7 @@ dependencies = [
  "actix-rt",
  "actix-service",
  "bitflags",
- "bytes 0.5.6",
+ "bytes",
  "either",
  "futures-channel",
  "futures-sink",
@@ -230,7 +230,7 @@ dependencies = [
  "actix-utils",
  "actix-web-codegen",
  "awc",
- "bytes 0.5.6",
+ "bytes",
  "derive_more",
  "encoding_rs",
  "futures-channel",
@@ -351,7 +351,7 @@ dependencies = [
  "actix-rt",
  "actix-service",
  "base64",
- "bytes 0.5.6",
+ "bytes",
  "cfg-if 1.0.0",
  "derive_more",
  "futures-core",
@@ -525,18 +525,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e4cec68f03f32e44924783795810fa50a7035d8c8ebe78580ad7e6c703fba38"
 
 [[package]]
-name = "bytes"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0dcbc35f504eb6fc275a6d20e4ebcda18cf50d40ba6fabff8c711fa16cb3b16"
-
-[[package]]
 name = "bytestring"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7c05fa5172da78a62d9949d662d2ac89d4cc7355d7b49adee5163f1fb3f363"
 dependencies = [
- "bytes 0.5.6",
+ "bytes",
 ]
 
 [[package]]
@@ -1114,7 +1108,7 @@ version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e4728fd124914ad25e99e3d15a9361a879f6620f63cb56bbb08f95abb97a535"
 dependencies = [
- "bytes 0.5.6",
+ "bytes",
  "fnv",
  "futures-core",
  "futures-sink",
@@ -1122,8 +1116,8 @@ dependencies = [
  "http",
  "indexmap",
  "slab",
- "tokio 0.2.23",
- "tokio-util 0.3.1",
+ "tokio",
+ "tokio-util",
  "tracing",
  "tracing-futures",
 ]
@@ -1169,7 +1163,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d569972648b2c512421b5f2a405ad6ac9666547189d0c5477a3f200f3e02f9"
 dependencies = [
- "bytes 0.5.6",
+ "bytes",
  "fnv",
  "itoa",
 ]
@@ -1289,8 +1283,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tera",
- "tokio 0.3.5",
- "tokio-util 0.5.0",
+ "tokio",
+ "tokio-util",
  "uuid",
 ]
 
@@ -1505,23 +1499,10 @@ dependencies = [
  "kernel32-sys",
  "libc",
  "log",
- "miow 0.2.2",
+ "miow",
  "net2",
  "slab",
  "winapi 0.2.8",
-]
-
-[[package]]
-name = "mio"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f33bc887064ef1fd66020c9adfc45bb9f33d75a42096c81e7c56c65b75dd1a8b"
-dependencies = [
- "libc",
- "log",
- "miow 0.3.6",
- "ntapi",
- "winapi 0.3.9",
 ]
 
 [[package]]
@@ -1532,7 +1513,7 @@ checksum = "afcb699eb26d4332647cc848492bbc15eafb26f08d0304550d5aa1f612e066f0"
 dependencies = [
  "iovec",
  "libc",
- "mio 0.6.22",
+ "mio",
 ]
 
 [[package]]
@@ -1545,16 +1526,6 @@ dependencies = [
  "net2",
  "winapi 0.2.8",
  "ws2_32-sys",
-]
-
-[[package]]
-name = "miow"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a33c1b55807fbed163481b5ba66db4b2fa6cde694a5027be10fb724206c5897"
-dependencies = [
- "socket2",
- "winapi 0.3.9",
 ]
 
 [[package]]
@@ -1576,15 +1547,6 @@ checksum = "ffb4262d26ed83a1c0a33a38fe2bb15797329c85770da05e6b828ddb782627af"
 dependencies = [
  "memchr",
  "version_check",
-]
-
-[[package]]
-name = "ntapi"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f6bb902e437b6d86e03cce10a7e2af662292c5dfef23b65899ea3ac9354ad44"
-dependencies = [
- "winapi 0.3.9",
 ]
 
 [[package]]
@@ -2374,40 +2336,26 @@ version = "0.2.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6d7ad61edd59bfcc7e80dababf0f4aed2e6d5e0ba1659356ae889752dfc12ff"
 dependencies = [
- "bytes 0.5.6",
+ "bytes",
  "futures-core",
  "iovec",
  "lazy_static",
  "libc",
  "memchr",
- "mio 0.6.22",
+ "mio",
  "mio-uds",
  "pin-project-lite 0.1.11",
  "signal-hook-registry",
  "slab",
+ "tokio-macros",
  "winapi 0.3.9",
 ]
 
 [[package]]
-name = "tokio"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a12a3eb39ee2c231be64487f1fcbe726c8f2514876a55480a5ab8559fc374252"
-dependencies = [
- "autocfg",
- "lazy_static",
- "libc",
- "mio 0.7.6",
- "pin-project-lite 0.2.0",
- "slab",
- "tokio-macros",
-]
-
-[[package]]
 name = "tokio-macros"
-version = "0.3.1"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21d30fdbb5dc2d8f91049691aa1a9d4d4ae422a21c334ce8936e5886d30c5c45"
+checksum = "e44da00bfc73a25f814cd8d7e57a68a5c31b74b3152a0a1d1f590c97ed06265a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2420,27 +2368,13 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be8242891f2b6cbef26a2d7e8605133c2c554cd35b3e4948ea892d6d68436499"
 dependencies = [
- "bytes 0.5.6",
- "futures-core",
- "futures-sink",
- "log",
- "pin-project-lite 0.1.11",
- "tokio 0.2.23",
-]
-
-[[package]]
-name = "tokio-util"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73af76301319bcacf00d26d3c75534ef248dcad7ceaf36d93ec902453c3b1706"
-dependencies = [
- "bytes 0.6.0",
+ "bytes",
  "futures-core",
  "futures-io",
  "futures-sink",
  "log",
  "pin-project-lite 0.1.11",
- "tokio 0.3.5",
+ "tokio",
 ]
 
 [[package]]
@@ -2490,7 +2424,7 @@ dependencies = [
  "rand",
  "smallvec",
  "thiserror",
- "tokio 0.2.23",
+ "tokio",
  "url",
 ]
 
@@ -2510,7 +2444,7 @@ dependencies = [
  "resolv-conf",
  "smallvec",
  "thiserror",
- "tokio 0.2.23",
+ "tokio",
  "trust-dns-proto",
 ]
 

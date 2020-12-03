@@ -5,7 +5,7 @@ use std::io::{stdout, Write, BufReader};
 use std::str;
 use std::path::Path;
 
-use crate::util;
+use common;
 
 use indradb_proto::service;
 use capnp::Error as CapnpError;
@@ -17,6 +17,8 @@ use bzip2::bufread::BzDecoder;
 use quick_xml::{Reader, events::Event};
 use regex::Regex;
 use serde::{Serialize, Deserialize};
+use tokio::task;
+use clap::{App, Arg};
 
 const REQUEST_BUFFER_SIZE: usize = 10_000;
 const PROMISE_BUFFER_SIZE: usize = 10;
@@ -102,7 +104,7 @@ impl ArticleMap {
             return uuid;
         }
 
-        let uuid = util::article_uuid(name);
+        let uuid = common::article_uuid(name);
         self.uuids.insert(name.to_string(), uuid);
         uuid
     }
@@ -276,5 +278,38 @@ pub async fn insert_links(client: &service::Client, article_map: &ArticleMap) ->
     inserter.flush().await?;
     progress.finish();
     println!();
+    Ok(())
+}
+
+#[tokio::main(basic_scheduler)]
+pub async fn main() -> Result<(), Box<dyn Error>> {
+    let matches = App::new("IndraDB wikipedia example")
+        .about("demonstrates IndraDB with the wikipedia dataset")
+        .arg(Arg::with_name("ARCHIVE_INPUT")
+            .help("Sets the input archive file to use")
+            .required(true)
+            .index(1))
+        .arg(Arg::with_name("ARCHIVE_DUMP")
+            .help("Sets the path of the archive cache dump")
+            .required(true)
+            .index(2))
+        .get_matches();
+
+    let mut server = common::Server::start()?;
+
+    let job_result: Result<(), Box<dyn Error>> = task::LocalSet::new().run_until(async move {
+        let client = common::retrying_client().await?;
+        let article_map = load_article_map(
+            matches.value_of("ARCHIVE_INPUT").unwrap(),
+            matches.value_of("ARCHIVE_DUMP").unwrap(),
+        ).await?;
+        insert_articles(&client, &article_map).await?;
+        insert_links(&client, &article_map).await?;
+        Ok(())
+    }).await;
+
+    let stop_result = server.stop();
+    job_result?;
+    stop_result?;
     Ok(())
 }

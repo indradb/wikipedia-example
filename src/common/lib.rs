@@ -1,3 +1,5 @@
+#[macro_use] extern crate lazy_static;
+
 use std::net::ToSocketAddrs;
 use std::error::Error;
 use std::process::{Command, Child};
@@ -10,7 +12,7 @@ use capnp_rpc::{twoparty, RpcSystem};
 use blake2b_simd::Params;
 use uuid::Uuid;
 use tokio::task;
-use tokio::time::sleep;
+use tokio::time::delay_for;
 use tokio_util::compat::Tokio02AsyncReadCompatExt;
 use futures::AsyncReadExt;
 use futures::FutureExt;
@@ -44,8 +46,6 @@ pub async fn client() -> Result<service::Client, CapnpError> {
 
     task::spawn_local(Box::pin(rpc_system.map(|_| ())));
 
-    client.ping_request().send().promise.await?;
-
     Ok(client)
 }
 
@@ -54,14 +54,15 @@ pub async fn retrying_client() -> Result<service::Client, CapnpError> {
 
     for _ in 0..5 {
         match client().await {
-            Ok(client) => {
-                return Ok(client);
+            Ok(client) => match client.ping_request().send().promise.await {
+                Ok(_) => return Ok(client),
+                Err(err) => last_err = Some(err)
             },
             Err(err) => {
                 last_err = Some(err);
             }
         }
-        sleep(Duration::from_secs(1)).await;
+        delay_for(Duration::from_secs(1)).await;
     }
 
     Err(last_err.unwrap())

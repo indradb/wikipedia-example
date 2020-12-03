@@ -10,7 +10,7 @@ venv:
 data: venv
 	mkdir -p data
 	cargo build --release
-	python parse_archive.py enwiki-latest-pages-articles.xml.bz2 | cargo run --release -- crawl
+	cargo run --bin crawler --release -- enwiki-latest-pages-articles.xml.bz2 data/archive_dump.bincode
 
 clean:
 	rm -rf venv data
