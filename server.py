@@ -14,7 +14,7 @@ import indradb
 
 HOST_CONFIG = "localhost:27615"
 SECRET = "OME88YorohonzPNWEFsi0dIsouXWqeO$"
-DATABASE_URL = "sled://data/wikipedia.sled"
+DATABASE_URL = "rocksdb://data/wikipedia.rdb"
 # avoiding /var/run because it requires root
 PID_FILE = "/tmp/indradb-wikipedia-example.pid"
 
@@ -26,7 +26,6 @@ def start():
     env["SECRET"] = SECRET
     env["DATABASE_URL"] = DATABASE_URL
     env["RUST_BACKTRACE"] = "1"
-    env["SLEDDB_COMPRESSION"] = "true"
 
     server_proc = subprocess.Popen(["indradb"], stdout=sys.stdout, stderr=sys.stderr, env=env)
     

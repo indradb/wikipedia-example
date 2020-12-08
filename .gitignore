@@ -1,5 +1,5 @@
-venv
-data
+/venv
+/data
 __pycache__
 *.pyc
 *.pyo
