@@ -311,7 +311,7 @@ async fn insert_links(client: &service::Client, article_map: &ArticleMap) -> Res
 
     for (src_uuid, dst_uuids) in &article_map.links {
         for dst_uuid in dst_uuids {
-            inserter.push(indradb::BulkInsertItem::Edge(indradb::EdgeKey::new(*src_uuid, link_type.clone(), *dst_uuid))).await?;
+            inserter.push(indradb::BulkInsertItem::Edge(indradb::Edge::new(*src_uuid, link_type.clone(), *dst_uuid))).await?;
         }
         progress.inc();
     }

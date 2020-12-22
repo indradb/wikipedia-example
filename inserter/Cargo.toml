@@ -14,8 +14,8 @@ capnp-rpc = "0.13.1"
 futures = "0.3.5"
 blake2b_simd = "0.5.11"
 pbr = "^1.0.3"
-indradb-lib = "1.2.0"
-indradb-proto = "1.2.0"
+indradb-lib = { path = "../../indradb/lib" }
+indradb-proto = { path = "../../indradb/proto" }
 clap = "2"
 bzip2 = "0.4.1"
 quick-xml = "0.20.0"
