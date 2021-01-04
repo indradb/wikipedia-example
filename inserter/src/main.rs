@@ -3,15 +3,13 @@
 use std::error::Error as StdError;
 use std::fs::File;
 use std::io::{BufReader, Write, stdout};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::str;
 use std::path::Path;
 use std::convert::TryInto;
-use std::pin::Pin;
 
 use failure::Fail;
 use indradb_proto as proto;
-use futures::prelude::*;
 use serde_json::value::Value as JsonValue;
 use uuid::Uuid;
 use blake2b_simd::Params;
@@ -23,10 +21,11 @@ use serde::{Serialize, Deserialize};
 use tokio::task;
 use clap::{App, Arg};
 use tonic::transport::Endpoint;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 const PORT: u16 = 27615;
 const REQUEST_BUFFER_SIZE: usize = 10_000;
-const PROMISE_BUFFER_SIZE: usize = 10;
 
 const ARTICLE_NAME_PREFIX_BLACKLIST: [&str; 7] = [
     "Wikipedia:",
@@ -54,42 +53,43 @@ pub fn article_uuid<T: AsRef<[u8]>>(name: T) -> Uuid {
 }
 
 struct BulkInserter {
-    client: proto::Client,
-    buf: Vec<indradb::BulkInsertItem>,
-    futures: VecDeque<Pin<Box<dyn Future<Output=Result<(), proto::ClientError>>>>>
+    requests: mpsc::Sender<indradb::BulkInsertItem>,
+    handle: JoinHandle<()>,
 }
 
 impl BulkInserter {
-    fn new(client: proto::Client) -> Self {
-        Self {
-            client,
-            buf: Vec::with_capacity(REQUEST_BUFFER_SIZE),
-            futures: VecDeque::with_capacity(PROMISE_BUFFER_SIZE)
-        }
-    }
+    fn new(mut client: proto::Client) -> Self {
+        let (tx, mut rx) = mpsc::channel(REQUEST_BUFFER_SIZE);
 
-    async fn flush(self) -> Result<(), proto::ClientError> {
-        for future in self.futures {
-            future.await?;
-        }
+        let handle = tokio::spawn(async move {
+            let mut buf = Vec::with_capacity(REQUEST_BUFFER_SIZE);
 
-        Ok(())
-    }
+            while let Some(item) = rx.recv().await {
+                buf.push(item);
 
-    async fn push(&mut self, item: indradb::BulkInsertItem) -> Result<(), proto::ClientError> {
-        self.buf.push(item);
-
-        if self.buf.len() >= REQUEST_BUFFER_SIZE {
-            while self.futures.len() >= PROMISE_BUFFER_SIZE {
-                self.futures.pop_front().unwrap().await?;
+                if buf.len() >= REQUEST_BUFFER_SIZE {
+                    client.bulk_insert(buf.drain(..)).await.unwrap();
+                }
             }
 
-            let f = Box::pin(self.client.bulk_insert(self.buf.into_iter()));
-            self.futures.push_back(f);
-            self.buf = Vec::with_capacity(REQUEST_BUFFER_SIZE);
-        }
+            if !buf.is_empty() {
+                client.bulk_insert(buf.drain(..)).await.unwrap();
+            }
+        });
 
-        Ok(())
+        Self {
+            requests: tx,
+            handle,
+        }
+    }
+
+    async fn flush(self) {
+        drop(self.requests);
+        self.handle.await.unwrap();
+    }
+
+    async fn push(&mut self, item: indradb::BulkInsertItem) {
+        self.requests.send(item).await.unwrap();
     }
 }
 
@@ -261,12 +261,12 @@ async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Res
     let article_type = indradb::Type::new("article").unwrap();
 
     for (article_name, article_uuid) in &article_map.uuids {
-        inserter.push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(*article_uuid, article_type.clone()))).await?;
-        inserter.push(indradb::BulkInsertItem::VertexProperty(*article_uuid, "name".to_string(), JsonValue::String(article_name.clone()))).await?;
+        inserter.push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(*article_uuid, article_type.clone()))).await;
+        inserter.push(indradb::BulkInsertItem::VertexProperty(*article_uuid, "name".to_string(), JsonValue::String(article_name.clone()))).await;
         progress.inc();
     }
 
-    inserter.flush().await?;
+    inserter.flush().await;
     progress.finish();
     println!();
     Ok(())
@@ -281,12 +281,12 @@ async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result
 
     for (src_uuid, dst_uuids) in &article_map.links {
         for dst_uuid in dst_uuids {
-            inserter.push(indradb::BulkInsertItem::Edge(indradb::EdgeKey::new(*src_uuid, link_type.clone(), *dst_uuid))).await?;
+            inserter.push(indradb::BulkInsertItem::Edge(indradb::EdgeKey::new(*src_uuid, link_type.clone(), *dst_uuid))).await;
         }
         progress.inc();
     }
 
-    inserter.flush().await?;
+    inserter.flush().await;
     progress.finish();
     println!();
     Ok(())
@@ -313,7 +313,6 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
         .get_matches();
 
     task::LocalSet::new().run_until(async move {
-        
         let article_map = load_article_map(
             matches.value_of("ARCHIVE_INPUT").unwrap(),
             matches.value_of("ARCHIVE_DUMP").unwrap(),
