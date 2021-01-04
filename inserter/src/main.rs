@@ -1,18 +1,16 @@
 #[macro_use] extern crate lazy_static;
 
-use std::net::ToSocketAddrs;
-use std::error::Error;
+use std::error::Error as StdError;
 use std::fs::File;
 use std::io::{BufReader, Write, stdout};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::str;
 use std::path::Path;
+use std::convert::TryInto;
+use std::pin::Pin;
 
-use indradb_proto::service;
-use capnp::Error as CapnpError;
-use capnp::capability::{Promise, Response};
-use capnp_rpc::rpc_twoparty_capnp::Side;
-use capnp_rpc::{twoparty, RpcSystem};
+use failure::Fail;
+use indradb_proto as proto;
 use futures::prelude::*;
 use serde_json::value::Value as JsonValue;
 use uuid::Uuid;
@@ -23,9 +21,8 @@ use quick_xml::{Reader, events::Event};
 use regex::Regex;
 use serde::{Serialize, Deserialize};
 use tokio::task;
-use tokio::net::TcpStream;
-use tokio_util::compat::Tokio02AsyncReadCompatExt;
 use clap::{App, Arg};
+use tonic::transport::Endpoint;
 
 const PORT: u16 = 27615;
 const REQUEST_BUFFER_SIZE: usize = 10_000;
@@ -56,46 +53,39 @@ pub fn article_uuid<T: AsRef<[u8]>>(name: T) -> Uuid {
     Uuid::from_slice(hash.as_bytes()).unwrap()
 }
 
-struct BulkInserter<'a> {
-    client: &'a service::Client,
+struct BulkInserter {
+    client: proto::Client,
     buf: Vec<indradb::BulkInsertItem>,
-    promises: VecDeque<Promise<Response<service::bulk_insert_results::Owned>, CapnpError>>
+    futures: VecDeque<Pin<Box<dyn Future<Output=Result<(), proto::ClientError>>>>>
 }
 
-impl<'a> BulkInserter<'a> {
-    fn new(client: &'a service::Client) -> Self {
+impl BulkInserter {
+    fn new(client: proto::Client) -> Self {
         Self {
             client,
             buf: Vec::with_capacity(REQUEST_BUFFER_SIZE),
-            promises: VecDeque::with_capacity(PROMISE_BUFFER_SIZE)
+            futures: VecDeque::with_capacity(PROMISE_BUFFER_SIZE)
         }
     }
 
-    async fn flush(self) -> Result<(), CapnpError> {
-        for promise in self.promises {
-            let res = promise.await?;
-            res.get()?;
+    async fn flush(self) -> Result<(), proto::ClientError> {
+        for future in self.futures {
+            future.await?;
         }
 
         Ok(())
     }
 
-    async fn push(&mut self, item: indradb::BulkInsertItem) -> Result<(), CapnpError> {
+    async fn push(&mut self, item: indradb::BulkInsertItem) -> Result<(), proto::ClientError> {
         self.buf.push(item);
 
         if self.buf.len() >= REQUEST_BUFFER_SIZE {
-            while self.promises.len() >= PROMISE_BUFFER_SIZE {
-                let promise = self.promises.pop_front().unwrap();
-                let res = promise.await?;
-                res.get()?;
+            while self.futures.len() >= PROMISE_BUFFER_SIZE {
+                self.futures.pop_front().unwrap().await?;
             }
 
-            let mut req = self.client.bulk_insert_request();
-            indradb_proto::util::from_bulk_insert_items(
-                &self.buf,
-                req.get().init_items(self.buf.len() as u32)
-            )?;
-            self.promises.push_back(req.send().promise);
+            let f = Box::pin(self.client.bulk_insert(self.buf.into_iter()));
+            self.futures.push_back(f);
             self.buf = Vec::with_capacity(REQUEST_BUFFER_SIZE);
         }
 
@@ -136,26 +126,6 @@ impl ArticleMap {
     }
 }
 
-async fn build_client() -> Result<service::Client, CapnpError> {
-    let addr = format!("127.0.0.1:{}", PORT).to_socket_addrs().unwrap().next().unwrap();
-    let stream = TcpStream::connect(&addr).await?;
-    stream.set_nodelay(true)?;
-    let (reader, writer) = Tokio02AsyncReadCompatExt::compat(stream).split();
-
-    let rpc_network = Box::new(twoparty::VatNetwork::new(
-        reader,
-        writer,
-        Side::Client,
-        Default::default(),
-    ));
-    let mut rpc_system = RpcSystem::new(rpc_network, None);
-    let client: service::Client = rpc_system.bootstrap(Side::Server);
-
-    task::spawn_local(Box::pin(rpc_system.map(|_| ())));
-
-    Ok(client)
-}
-
 enum ArchiveReadState {
     Ignore,
     Page,
@@ -164,7 +134,7 @@ enum ArchiveReadState {
     Text,
 }
 
-async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
+async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
     let mut article_map = ArticleMap::default();
 
     let mut buf = Vec::new();
@@ -269,7 +239,7 @@ async fn read_archive(f: File) -> Result<ArticleMap, Box<dyn Error>> {
     Ok(article_map)
 }
 
-async fn load_article_map(input_filepath: &str, dump_filepath: &str) -> Result<ArticleMap, Box<dyn Error>> {
+async fn load_article_map(input_filepath: &str, dump_filepath: &str) -> Result<ArticleMap, Box<dyn StdError>> {
     if Path::new(dump_filepath).exists() {
         print!("reading dump...");
         stdout().flush()?;
@@ -283,7 +253,7 @@ async fn load_article_map(input_filepath: &str, dump_filepath: &str) -> Result<A
     }
 }
 
-async fn insert_articles(client: &service::Client, article_map: &ArticleMap) -> Result<(), Box<dyn Error>> {
+async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Result<(), proto::ClientError> {
     let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
     progress.message("indexing articles: ");
 
@@ -302,7 +272,7 @@ async fn insert_articles(client: &service::Client, article_map: &ArticleMap) -> 
     Ok(())
 }
 
-async fn insert_links(client: &service::Client, article_map: &ArticleMap) -> Result<(), Box<dyn Error>> {
+async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result<(), proto::ClientError> {
     let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
     progress.message("indexing links: ");
 
@@ -322,8 +292,14 @@ async fn insert_links(client: &service::Client, article_map: &ArticleMap) -> Res
     Ok(())
 }
 
+async fn build_client() -> Result<proto::Client, Box<dyn StdError>> {
+    let endpoint: Endpoint = format!("http://127.0.0.1:{}", PORT).try_into().unwrap();
+    let client = proto::Client::new(endpoint).await.map_err(|err| err.compat())?;
+    Ok(client)
+}
+
 #[tokio::main(basic_scheduler)]
-pub async fn main() -> Result<(), Box<dyn Error>> {
+pub async fn main() -> Result<(), Box<dyn StdError>> {
     let matches = App::new("IndraDB wikipedia example")
         .about("demonstrates IndraDB with the wikipedia dataset")
         .arg(Arg::with_name("ARCHIVE_INPUT")
@@ -337,13 +313,13 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         .get_matches();
 
     task::LocalSet::new().run_until(async move {
-        let client = build_client().await?;
+        
         let article_map = load_article_map(
             matches.value_of("ARCHIVE_INPUT").unwrap(),
             matches.value_of("ARCHIVE_DUMP").unwrap(),
         ).await?;
-        insert_articles(&client, &article_map).await?;
-        insert_links(&client, &article_map).await?;
+        insert_articles(build_client().await?, &article_map).await.map_err(|err| err.compat())?;
+        insert_links(build_client().await?, &article_map).await.map_err(|err| err.compat())?;
         Ok(())
     }).await
 }
