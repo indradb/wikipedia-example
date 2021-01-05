@@ -1,30 +1,23 @@
-#[macro_use] extern crate lazy_static;
-
 use std::error::Error as StdError;
 use std::fs::File;
 use std::io::{BufReader, Write, stdout};
 use std::collections::{HashMap, HashSet};
 use std::str;
 use std::path::Path;
-use std::convert::TryInto;
 
 use failure::Fail;
 use indradb_proto as proto;
 use serde_json::value::Value as JsonValue;
 use uuid::Uuid;
-use blake2b_simd::Params;
 use pbr::ProgressBar;
 use bzip2::bufread::BzDecoder;
 use quick_xml::{Reader, events::Event};
 use regex::Regex;
 use serde::{Serialize, Deserialize};
-use tokio::task;
-use clap::{App, Arg};
-use tonic::transport::Endpoint;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use clap::{App, Arg};
 
-const PORT: u16 = 27615;
 const REQUEST_BUFFER_SIZE: usize = 10_000;
 
 const ARTICLE_NAME_PREFIX_BLACKLIST: [&str; 7] = [
@@ -38,19 +31,6 @@ const ARTICLE_NAME_PREFIX_BLACKLIST: [&str; 7] = [
 ];
 
 const REDIRECT_PREFIX: &str = "#REDIRECT [[";
-
-lazy_static! {
-    static ref HASHER_PARAMS: Params = {
-        let mut params = Params::new();
-        params.hash_length(16);
-        params
-    };
-}
-
-pub fn article_uuid<T: AsRef<[u8]>>(name: T) -> Uuid {
-    let hash = HASHER_PARAMS.hash(name.as_ref());
-    Uuid::from_slice(hash.as_bytes()).unwrap()
-}
 
 struct BulkInserter {
     requests: mpsc::Sender<indradb::BulkInsertItem>,
@@ -115,7 +95,7 @@ impl ArticleMap {
             return uuid;
         }
 
-        let uuid = article_uuid(name);
+        let uuid = common::article_uuid(name);
         self.uuids.insert(name.to_string(), uuid);
         uuid
     }
@@ -292,13 +272,7 @@ async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result
     Ok(())
 }
 
-async fn build_client() -> Result<proto::Client, Box<dyn StdError>> {
-    let endpoint: Endpoint = format!("http://127.0.0.1:{}", PORT).try_into().unwrap();
-    let client = proto::Client::new(endpoint).await.map_err(|err| err.compat())?;
-    Ok(client)
-}
-
-#[tokio::main(basic_scheduler)]
+#[tokio::main]
 pub async fn main() -> Result<(), Box<dyn StdError>> {
     let matches = App::new("IndraDB wikipedia example")
         .about("demonstrates IndraDB with the wikipedia dataset")
@@ -312,13 +286,16 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
             .index(2))
         .get_matches();
 
-    task::LocalSet::new().run_until(async move {
-        let article_map = load_article_map(
-            matches.value_of("ARCHIVE_INPUT").unwrap(),
-            matches.value_of("ARCHIVE_DUMP").unwrap(),
-        ).await?;
-        insert_articles(build_client().await?, &article_map).await.map_err(|err| err.compat())?;
-        insert_links(build_client().await?, &article_map).await.map_err(|err| err.compat())?;
-        Ok(())
-    }).await
+    let _server = common::Server::start()?;
+
+    let article_map = load_article_map(
+        matches.value_of("ARCHIVE_INPUT").unwrap(),
+        matches.value_of("ARCHIVE_DUMP").unwrap(),
+    ).await?;
+
+    let client = common::client().await.map_err(|err| err.compat())?;
+    insert_articles(client, &article_map).await.map_err(|err| err.compat())?;
+    let client = common::client().await.map_err(|err| err.compat())?;
+    insert_links(client, &article_map).await.map_err(|err| err.compat())?;
+    Ok(())
 }
