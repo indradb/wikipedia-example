@@ -4,6 +4,7 @@ use std::io::{BufReader, Write, stdout};
 use std::collections::{HashMap, HashSet};
 use std::str;
 use std::path::Path;
+use std::mem::replace;
 
 use failure::Fail;
 use indradb_proto as proto;
@@ -33,43 +34,42 @@ const ARTICLE_NAME_PREFIX_BLACKLIST: [&str; 7] = [
 const REDIRECT_PREFIX: &str = "#REDIRECT [[";
 
 struct BulkInserter {
-    requests: mpsc::Sender<indradb::BulkInsertItem>,
+    requests: mpsc::Sender<Vec<indradb::BulkInsertItem>>,
     handle: JoinHandle<()>,
+    buf: Vec<indradb::BulkInsertItem>
 }
 
 impl BulkInserter {
     fn new(mut client: proto::Client) -> Self {
-        let (tx, mut rx) = mpsc::channel(REQUEST_BUFFER_SIZE);
+        let (tx, mut rx) = mpsc::channel::<Vec<indradb::BulkInsertItem>>(10);
 
         let handle = tokio::spawn(async move {
-            let mut buf = Vec::with_capacity(REQUEST_BUFFER_SIZE);
-
-            while let Some(item) = rx.recv().await {
-                buf.push(item);
-
-                if buf.len() >= REQUEST_BUFFER_SIZE {
-                    client.bulk_insert(buf.drain(..)).await.unwrap();
-                }
-            }
-
-            if !buf.is_empty() {
-                client.bulk_insert(buf.drain(..)).await.unwrap();
+            while let Some(buf) = rx.recv().await {
+                client.bulk_insert(buf.into_iter()).await.unwrap();
             }
         });
 
         Self {
             requests: tx,
             handle,
+            buf: Vec::with_capacity(REQUEST_BUFFER_SIZE),
         }
     }
 
-    async fn flush(self) {
+    async fn flush(mut self) {
+        if !self.buf.is_empty() {
+            self.requests.send(self.buf).await.unwrap();
+        }
         drop(self.requests);
         self.handle.await.unwrap();
     }
 
     async fn push(&mut self, item: indradb::BulkInsertItem) {
-        self.requests.send(item).await.unwrap();
+        self.buf.push(item);
+        if self.buf.len() >= REQUEST_BUFFER_SIZE {
+            let buf = replace(&mut self.buf, Vec::with_capacity(REQUEST_BUFFER_SIZE));
+            self.requests.send(buf).await.unwrap();
+        }
     }
 }
 
