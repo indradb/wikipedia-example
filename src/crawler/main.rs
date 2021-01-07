@@ -15,7 +15,6 @@ use bzip2::bufread::BzDecoder;
 use quick_xml::{Reader, events::Event};
 use regex::Regex;
 use serde::{Serialize, Deserialize};
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use clap::{App, Arg};
 
@@ -34,34 +33,43 @@ const ARTICLE_NAME_PREFIX_BLACKLIST: [&str; 7] = [
 const REDIRECT_PREFIX: &str = "#REDIRECT [[";
 
 struct BulkInserter {
-    requests: mpsc::Sender<Vec<indradb::BulkInsertItem>>,
-    handle: JoinHandle<()>,
+    requests: async_channel::Sender<Vec<indradb::BulkInsertItem>>,
+    workers: Vec<JoinHandle<()>>,
     buf: Vec<indradb::BulkInsertItem>
 }
 
-impl BulkInserter {
-    fn new(mut client: proto::Client) -> Self {
-        let (tx, mut rx) = mpsc::channel::<Vec<indradb::BulkInsertItem>>(10);
+impl Default for BulkInserter {
+    fn default() -> Self {
+        let (tx, rx) = async_channel::bounded::<Vec<indradb::BulkInsertItem>>(10);
+        let mut workers = Vec::default();
 
-        let handle = tokio::spawn(async move {
-            while let Some(buf) = rx.recv().await {
-                client.bulk_insert(buf.into_iter()).await.unwrap();
-            }
-        });
+        for _ in 0..10 {
+            let rx = rx.clone();
+            workers.push(tokio::spawn(async move {
+                let mut client = common::client().await.unwrap();
+                while let Ok(buf) = rx.recv().await {
+                    client.bulk_insert(buf.into_iter()).await.unwrap();
+                }
+            }));
+        }
 
         Self {
             requests: tx,
-            handle,
+            workers,
             buf: Vec::with_capacity(REQUEST_BUFFER_SIZE),
         }
     }
+}
 
-    async fn flush(mut self) {
+impl BulkInserter {
+    async fn flush(self) {
         if !self.buf.is_empty() {
             self.requests.send(self.buf).await.unwrap();
         }
-        drop(self.requests);
-        self.handle.await.unwrap();
+        self.requests.close();
+        for worker in self.workers.into_iter() {
+            worker.await.unwrap();
+        }
     }
 
     async fn push(&mut self, item: indradb::BulkInsertItem) {
@@ -233,11 +241,11 @@ async fn load_article_map(input_filepath: &str, dump_filepath: &str) -> Result<A
     }
 }
 
-async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Result<(), proto::ClientError> {
+async fn insert_articles(article_map: &ArticleMap) -> Result<(), proto::ClientError> {
     let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
     progress.message("indexing articles: ");
 
-    let mut inserter = BulkInserter::new(client);
+    let mut inserter = BulkInserter::default();
     let article_type = indradb::Type::new("article").unwrap();
 
     for (article_name, article_uuid) in &article_map.uuids {
@@ -252,11 +260,11 @@ async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Res
     Ok(())
 }
 
-async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result<(), proto::ClientError> {
+async fn insert_links(article_map: &ArticleMap) -> Result<(), proto::ClientError> {
     let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
     progress.message("indexing links: ");
 
-    let mut inserter = BulkInserter::new(client);
+    let mut inserter = BulkInserter::default();
     let link_type = indradb::Type::new("link").unwrap();
 
     for (src_uuid, dst_uuids) in &article_map.links {
@@ -293,9 +301,7 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
         matches.value_of("ARCHIVE_DUMP").unwrap(),
     ).await?;
 
-    let client = common::client().await.map_err(|err| err.compat())?;
-    insert_articles(client, &article_map).await.map_err(|err| err.compat())?;
-    let client = common::client().await.map_err(|err| err.compat())?;
-    insert_links(client, &article_map).await.map_err(|err| err.compat())?;
+    insert_articles(&article_map).await.map_err(|err| err.compat())?;
+    insert_links(&article_map).await.map_err(|err| err.compat())?;
     Ok(())
 }
