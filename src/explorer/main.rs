@@ -103,39 +103,35 @@ async fn article(state: web::Data<AppState>, web::Query(query): web::Query<Artic
     let article_id = common::article_uuid(&query.name);
     let vertex_query = indradb::SpecificVertexQuery::single(article_id);
 
-    let template_context = task::LocalSet::new().run_until(async move {
-        let mut client = common::client().await?;
-        let mut trans = client.transaction().await?;
+    let mut client = common::client().await?;
+    let mut trans = client.transaction().await?;
 
-        let vertices = trans.get_vertices(vertex_query.clone()).await?;
-        if vertices.len() == 0 {
-            return Err(Error::ArticleNotFound { name: query.name.clone() });
-        }
+    let vertices = trans.get_vertices(vertex_query.clone()).await?;
+    if vertices.len() == 0 {
+        return Err(Error::ArticleNotFound { name: query.name.clone() });
+    }
 
-        let edge_count = trans.get_edge_count(article_id, None, indradb::EdgeDirection::Outbound).await?;
-        let edges = trans.get_edges(vertex_query.outbound()).await?;
+    let edge_count = trans.get_edge_count(article_id, None, indradb::EdgeDirection::Outbound).await?;
+    let edges = trans.get_edges(vertex_query.outbound()).await?;
 
-        let name = {
-            let q = indradb::VertexPropertyQuery::new(
-                indradb::SpecificVertexQuery::new(edges.iter().map(|e| e.key.inbound_id).collect()).into(),
-                "name"
-            );
-            trans.get_vertex_properties(q).await?
-        };
+    let name = {
+        let q = indradb::VertexPropertyQuery::new(
+            indradb::SpecificVertexQuery::new(edges.iter().map(|e| e.key.inbound_id).collect()).into(),
+            "name"
+        );
+        trans.get_vertex_properties(q).await?
+    };
 
-        let inbound_edges = name.iter()
-            .map(|p| (p.id.to_string(), p.value.to_string()))
-            .collect();
+    let inbound_edges = name.iter()
+        .map(|p| (p.id.to_string(), p.value.to_string()))
+        .collect();
 
-        let context = Context::from_serialize(&ArticleTemplateArgs {
-            article_name: query.name,
-            article_id: article_id.to_string(),
-            edge_count,
-            inbound_edges
-        }).unwrap();
-
-        Ok(context)
-    }).await?;
+    let template_context =Context::from_serialize(&ArticleTemplateArgs {
+        article_name: query.name,
+        article_id: article_id.to_string(),
+        edge_count,
+        inbound_edges
+    }).unwrap();
 
     let rendered = state.templates.render("article.tera", &template_context).unwrap();
     Ok(HttpResponse::Ok().content_type("text/html").body(rendered))
@@ -156,6 +152,5 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
     }).bind("127.0.0.1:8080")?.run().await?;
 
     sys.await?;
-
     Ok(())
 }
