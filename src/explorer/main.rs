@@ -1,14 +1,14 @@
 use std::error::Error as StdError;
+use std::convert::Infallible;
 
 use common;
 
 use indradb_proto as proto;
 use indradb::VertexQueryExt;
-use tera::{Tera, Context};
-use actix_web::{web, App, HttpServer, error, http::StatusCode, HttpResponse, http::header, dev::HttpResponseBuilder};
 use serde::{Serialize, Deserialize};
 use derive_more::{Display, Error};
-use tokio::task;
+use handlebars::Handlebars;
+use warp::Filter;
 
 const INDEX: &str = r#"
 <form method="get" action="/article">
@@ -41,18 +41,6 @@ const ARTICLE_TEMPLATE: &str = r#"
 {% endif %}
 "#;
 
-struct AppState {
-    templates: Tera
-}
-
-impl AppState {
-    fn new() -> Result<Self, Box<dyn StdError>> {
-        let mut templates = Tera::default();
-        templates.add_raw_template("article.tera", ARTICLE_TEMPLATE)?;
-        Ok(AppState { templates })
-    }
-}
-
 #[derive(Debug, Display, Error)]
 enum Error {
     #[display(fmt = "client error: {}", err)]
@@ -67,23 +55,25 @@ impl From<proto::ClientError> for Error {
     }
 }
 
-impl error::ResponseError for Error {
-    fn error_response(&self) -> HttpResponse {
-        HttpResponseBuilder::new(self.status_code())
-            .set_header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-            .body(self.to_string())
-    }
+impl warp::reject::Reject for Error {}
 
-    fn status_code(&self) -> StatusCode {
-        match self {
-            Error::Client { err: _ } => StatusCode::INTERNAL_SERVER_ERROR,
-            Error::ArticleNotFound { name: _ } => StatusCode::NOT_FOUND
+async fn handle_rejection(err: warp::reject::Rejection) -> Result<impl warp::Reply, Infallible> {
+    let (status, message) = if let Some(err) = err.find::<Error>() {
+        match err {
+            Error::Client { err } => {
+                let message = format!("internal error: {}", err);
+                (warp::http::StatusCode::INTERNAL_SERVER_ERROR, message)
+            },
+            Error::ArticleNotFound { name } => {
+                let message = format!("article not found: {}", name);
+                (warp::http::StatusCode::NOT_FOUND, message)
+            }
         }
-    }
-}
+    } else {
+        (warp::http::StatusCode::INTERNAL_SERVER_ERROR, "UNHANDLED_REJECTION".to_string())
+    };
 
-async fn index() -> HttpResponse {
-    HttpResponse::Ok().content_type("text/html").body(INDEX)
+    Ok(warp::reply::with_status(warp::reply::html(message), status))
 }
 
 #[derive(Deserialize)]
@@ -99,7 +89,11 @@ struct ArticleTemplateArgs {
     inbound_edges: Vec<(String, String)>
 }
 
-async fn article(state: web::Data<AppState>, web::Query(query): web::Query<ArticleQueryParams>) -> Result<HttpResponse, Error> {
+async fn handle_index() -> Result<impl warp::Reply, Error> {
+    Ok(warp::reply::html(INDEX))
+}
+
+async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, Error> {
     let article_id = common::article_uuid(&query.name);
     let vertex_query = indradb::SpecificVertexQuery::single(article_id);
 
@@ -126,31 +120,39 @@ async fn article(state: web::Data<AppState>, web::Query(query): web::Query<Artic
         .map(|p| (p.id.to_string(), p.value.to_string()))
         .collect();
 
-    let template_context =Context::from_serialize(&ArticleTemplateArgs {
+    let template_args = ArticleTemplateArgs {
         article_name: query.name,
         article_id: article_id.to_string(),
         edge_count,
         inbound_edges
-    }).unwrap();
+    };
 
-    let rendered = state.templates.render("article.tera", &template_context).unwrap();
-    Ok(HttpResponse::Ok().content_type("text/html").body(rendered))
+    let mut hb = Handlebars::new();
+    hb.register_template_string("article.html", ARTICLE_TEMPLATE).unwrap();
+    let render = hb
+        .render("article.html", &template_args)
+        .unwrap_or_else(|err| err.to_string());
+    Ok(warp::reply::html(render))
 }
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn StdError>> {
     let _server = common::Server::start()?;
 
-    let local = task::LocalSet::new();
-    let sys = actix_web::rt::System::run_in_tokio("server", &local);
+    let index_route = warp::path::end()
+        .and(warp::get())
+        .and_then(handle_index);
 
-    HttpServer::new(|| {
-        App::new()
-            .data(AppState::new().unwrap())
-            .route("/", web::get().to(index))
-            .route("/article", web::get().to(article))
-    }).bind("127.0.0.1:8080")?.run().await?;
+    let article_route = warp::path("article")
+        .and(warp::get())
+        .and(warp::query::<ArticleQueryParams>())
+        .and_then(handle_article);
 
-    sys.await?;
+    let routes = index_route
+        .or(article_route)
+        .recover(handle_rejection);
+
+    warp::serve(routes).run(([127, 0, 0, 1], 8080)).await;
+
     Ok(())
 }
