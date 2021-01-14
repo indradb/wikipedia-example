@@ -49,13 +49,11 @@ enum Error {
     ArticleNotFound { name: String }
 }
 
-impl From<proto::ClientError> for Error {
-    fn from(err: proto::ClientError) -> Self {
-        Error::Client { err }
-    }
-}
-
 impl warp::reject::Reject for Error {}
+
+fn map_result<T>(result: Result<T, proto::ClientError>) -> Result<T, warp::Rejection> {
+    result.map_err(|err| warp::reject::custom(Error::Client { err }))
+}
 
 async fn handle_rejection(err: warp::reject::Rejection) -> Result<impl warp::Reply, Infallible> {
     let (status, message) = if let Some(err) = err.find::<Error>() {
@@ -89,31 +87,31 @@ struct ArticleTemplateArgs {
     inbound_edges: Vec<(String, String)>
 }
 
-async fn handle_index() -> Result<impl warp::Reply, Error> {
+async fn handle_index() -> Result<impl warp::Reply, Infallible> {
     Ok(warp::reply::html(INDEX))
 }
 
-async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, Error> {
+async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, warp::Rejection> {
     let article_id = common::article_uuid(&query.name);
     let vertex_query = indradb::SpecificVertexQuery::single(article_id);
 
-    let mut client = common::client().await?;
-    let mut trans = client.transaction().await?;
+    let mut client = map_result(common::client().await)?;
+    let mut trans = map_result(client.transaction().await)?;
 
-    let vertices = trans.get_vertices(vertex_query.clone()).await?;
+    let vertices = map_result(trans.get_vertices(vertex_query.clone()).await)?;
     if vertices.len() == 0 {
-        return Err(Error::ArticleNotFound { name: query.name.clone() });
+        return Err(warp::reject::custom(Error::ArticleNotFound { name: query.name.clone() }));
     }
 
-    let edge_count = trans.get_edge_count(article_id, None, indradb::EdgeDirection::Outbound).await?;
-    let edges = trans.get_edges(vertex_query.outbound()).await?;
+    let edge_count = map_result(trans.get_edge_count(article_id, None, indradb::EdgeDirection::Outbound).await)?;
+    let edges = map_result(trans.get_edges(vertex_query.outbound()).await)?;
 
     let name = {
         let q = indradb::VertexPropertyQuery::new(
             indradb::SpecificVertexQuery::new(edges.iter().map(|e| e.key.inbound_id).collect()).into(),
             "name"
         );
-        trans.get_vertex_properties(q).await?
+        map_result(trans.get_vertex_properties(q).await)?
     };
 
     let inbound_edges = name.iter()
