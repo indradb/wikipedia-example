@@ -9,6 +9,7 @@ use serde::{Serialize, Deserialize};
 use derive_more::{Display, Error};
 use handlebars::Handlebars;
 use warp::Filter;
+use clap::{App, Arg};
 
 const INDEX: &str = r#"
 <form method="get" action="/article">
@@ -135,7 +136,15 @@ async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, w
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn StdError>> {
-    let _server = common::Server::start()?;
+    let matches = App::new("IndraDB wikipedia example")
+        .about("demonstrates IndraDB with the wikipedia dataset")
+        .arg(Arg::with_name("DATABASE_PATH")
+            .help("Sets the path of the rocksdb results")
+            .required(true)
+            .index(1))
+        .get_matches();
+
+    let _server = common::Server::start(matches.value_of("DATABASE_PATH").unwrap())?;
 
     let index_route = warp::path::end()
         .and(warp::get())

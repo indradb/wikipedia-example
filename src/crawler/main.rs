@@ -292,9 +292,13 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
             .help("Sets the path of the archive cache dump")
             .required(true)
             .index(2))
+        .arg(Arg::with_name("DATABASE_PATH")
+            .help("Sets the path of the rocksdb results")
+            .required(true)
+            .index(3))
         .get_matches();
 
-    let _server = common::Server::start()?;
+    let _server = common::Server::start(matches.value_of("DATABASE_PATH").unwrap())?;
 
     let article_map = load_article_map(
         matches.value_of("ARCHIVE_INPUT").unwrap(),

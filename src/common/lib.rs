@@ -10,7 +10,6 @@ use uuid::Uuid;
 use tonic::transport::Endpoint;
 
 const PORT: u16 = 27615;
-const DATABASE_PATH: &str = "data/wikipedia.sled";
 
 lazy_static! {
     static ref HASHER_PARAMS: Params = {
@@ -33,9 +32,9 @@ pub async fn client() -> Result<proto::Client, proto::ClientError> {
 pub struct Server(Child);
 
 impl Server {
-    pub fn start() -> Result<Self, Box<dyn Error>> {
+    pub fn start(database_path: &str) -> Result<Self, Box<dyn Error>> {
         let child = Command::new("indradb")
-            .args(&["sled", DATABASE_PATH, "--compression", "true"])
+            .args(&["rocksdb", database_path, "--compression", "true"])
             .env("RUST_BACKTRACE", "1")
             .spawn()?;
 
