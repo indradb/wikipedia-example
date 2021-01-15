@@ -34,7 +34,7 @@ pub struct Server(Child);
 impl Server {
     pub fn start(database_path: &str) -> Result<Self, Box<dyn Error>> {
         let child = Command::new("indradb")
-            .args(&["rocksdb", database_path, "--compression", "true"])
+            .args(&["rocksdb", database_path])
             .env("RUST_BACKTRACE", "1")
             .spawn()?;
 
