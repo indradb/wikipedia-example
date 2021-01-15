@@ -1,3 +1,4 @@
+#[macro_use] extern crate clap;
 #[macro_use] extern crate lazy_static;
 
 mod util;
@@ -11,6 +12,8 @@ use std::process::{Command, Child};
 
 pub struct Server(Child);
 
+// TODO: suppress stdout
+// TODO: make port dynamic
 impl Server {
     pub fn start(database_path: &str) -> Result<Self, Box<dyn StdError>> {
         let child = Command::new("indradb")
@@ -54,12 +57,18 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
         .required(true)
         .takes_value(true);
 
+    let port_arg = Arg::with_name("PORT")
+        .help("port to run the webserver on")
+        .long("port")
+        .value_name("PORT")
+        .default_value("8080")
+        .takes_value(true);
 
     let matches = App::new("IndraDB wikipedia example")
         .about("demonstrates IndraDB with the wikipedia dataset")
         .subcommand(SubCommand::with_name("parse").arg(&archive_arg).arg(&archive_dump_arg))
         .subcommand(SubCommand::with_name("index").arg(&archive_dump_arg).arg(&datastore_arg))
-        .subcommand(SubCommand::with_name("explore").arg(&datastore_arg))
+        .subcommand(SubCommand::with_name("explore").arg(&datastore_arg).arg(&port_arg))
         .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("parse") {
@@ -74,8 +83,9 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
         indexer::run(article_map).await
     } else if let Some(matches) = matches.subcommand_matches("explore") {
         let database_path = matches.value_of("DATABASE_PATH").unwrap();
+        let port = value_t!(matches.value_of("PORT"), u16).unwrap_or_else(|err| err.exit());
         let _server = Server::start(database_path)?;
-        explorer::run().await
+        explorer::run(port).await
     } else {
         panic!("no subcommand specified");
     }

@@ -130,7 +130,7 @@ async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, w
     Ok(warp::reply::html(render))
 }
 
-pub async fn run() -> Result<(), Box<dyn StdError>> {
+pub async fn run(port: u16) -> Result<(), Box<dyn StdError>> {
     let index_route = warp::path::end()
         .and(warp::get())
         .and_then(handle_index);
@@ -144,7 +144,7 @@ pub async fn run() -> Result<(), Box<dyn StdError>> {
         .or(article_route)
         .recover(handle_rejection);
 
-    warp::serve(routes).run(([127, 0, 0, 1], 8080)).await;
+    warp::serve(routes).run(([127, 0, 0, 1], port)).await;
 
     Ok(())
 }
