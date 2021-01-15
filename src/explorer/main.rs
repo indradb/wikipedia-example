@@ -6,7 +6,6 @@ use common;
 use indradb_proto as proto;
 use indradb::VertexQueryExt;
 use serde::{Serialize, Deserialize};
-use derive_more::{Display, Error};
 use handlebars::Handlebars;
 use warp::Filter;
 use clap::{App, Arg};
@@ -42,11 +41,9 @@ const ARTICLE_TEMPLATE: &str = r#"
 {% endif %}
 "#;
 
-#[derive(Debug, Display, Error)]
+#[derive(Debug)]
 enum Error {
-    #[display(fmt = "client error: {}", err)]
     Client { err: proto::ClientError },
-    #[display(fmt = "article not found: {}", name)]
     ArticleNotFound { name: String }
 }
 
