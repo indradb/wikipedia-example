@@ -31,4 +31,4 @@ tokio = { version = "0.2.23", features = ["net", "macros", "time", "rt-util"]}
 warp = "0.2.5"
 failure = "0.1.8"
 async-channel = "1.5.1"
-handlebars = "3.5.2"
+tera = "1"

@@ -5,8 +5,7 @@ use super::util;
 
 use indradb_proto as proto;
 use indradb::VertexQueryExt;
-use serde::{Serialize, Deserialize};
-use handlebars::Handlebars;
+use serde::Deserialize;
 use warp::Filter;
 
 const INDEX: &str = r#"
@@ -76,18 +75,11 @@ struct ArticleQueryParams {
     name: String
 }
 
-#[derive(Serialize)]
-struct ArticleTemplateArgs {
-    article_name: String,
-    article_id: String,
-    edge_count: u64,
-    inbound_edges: Vec<(String, String)>
-}
-
 async fn handle_index() -> Result<impl warp::Reply, Infallible> {
     Ok(warp::reply::html(INDEX))
 }
 
+// TODO: this could be optimized quite a bit, by moving tera and IndraDB client construction out
 async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, warp::Rejection> {
     let article_id = util::article_uuid(&query.name);
     let vertex_query = indradb::SpecificVertexQuery::single(article_id);
@@ -111,23 +103,17 @@ async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, w
         map_result(trans.get_vertex_properties(q).await)?
     };
 
-    let inbound_edges = name.iter()
+    let inbound_edges: Vec<(String, String)> = name.iter()
         .map(|p| (p.id.to_string(), p.value.to_string()))
         .collect();
 
-    let template_args = ArticleTemplateArgs {
-        article_name: query.name,
-        article_id: article_id.to_string(),
-        edge_count,
-        inbound_edges
-    };
-
-    let mut hb = Handlebars::new();
-    hb.register_template_string("article.html", ARTICLE_TEMPLATE).unwrap();
-    let render = hb
-        .render("article.html", &template_args)
-        .unwrap_or_else(|err| err.to_string());
-    Ok(warp::reply::html(render))
+    let mut context = tera::Context::new();
+    context.insert("article_name", &query.name);
+    context.insert("article_id", &article_id.to_string());
+    context.insert("edge_count", &edge_count);
+    context.insert("inbound_edges", &inbound_edges);
+    let rendered = tera::Tera::one_off(ARTICLE_TEMPLATE, &context, true).unwrap();
+    Ok(warp::reply::html(rendered))
 }
 
 pub async fn run(port: u16) -> Result<(), Box<dyn StdError>> {
