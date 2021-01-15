@@ -1,14 +1,13 @@
 use std::error::Error as StdError;
 use std::convert::Infallible;
 
-use common;
+use super::util;
 
 use indradb_proto as proto;
 use indradb::VertexQueryExt;
 use serde::{Serialize, Deserialize};
 use handlebars::Handlebars;
 use warp::Filter;
-use clap::{App, Arg};
 
 const INDEX: &str = r#"
 <form method="get" action="/article">
@@ -90,10 +89,10 @@ async fn handle_index() -> Result<impl warp::Reply, Infallible> {
 }
 
 async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, warp::Rejection> {
-    let article_id = common::article_uuid(&query.name);
+    let article_id = util::article_uuid(&query.name);
     let vertex_query = indradb::SpecificVertexQuery::single(article_id);
 
-    let mut client = map_result(common::client().await)?;
+    let mut client = map_result(util::client().await)?;
     let mut trans = map_result(client.transaction().await)?;
 
     let vertices = map_result(trans.get_vertices(vertex_query.clone()).await)?;
@@ -131,18 +130,7 @@ async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, w
     Ok(warp::reply::html(render))
 }
 
-#[tokio::main]
-pub async fn main() -> Result<(), Box<dyn StdError>> {
-    let matches = App::new("IndraDB wikipedia example")
-        .about("demonstrates IndraDB with the wikipedia dataset")
-        .arg(Arg::with_name("DATABASE_PATH")
-            .help("Sets the path of the rocksdb results")
-            .required(true)
-            .index(1))
-        .get_matches();
-
-    let _server = common::Server::start(matches.value_of("DATABASE_PATH").unwrap())?;
-
+pub async fn run() -> Result<(), Box<dyn StdError>> {
     let index_route = warp::path::end()
         .and(warp::get())
         .and_then(handle_index);

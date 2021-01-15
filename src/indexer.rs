@@ -1,0 +1,106 @@
+use std::error::Error as StdError;
+use std::mem::replace;
+
+use super::util;
+
+use failure::Fail;
+use indradb_proto as proto;
+use serde_json::value::Value as JsonValue;
+use pbr::ProgressBar;
+use tokio::task::JoinHandle;
+
+const REQUEST_BUFFER_SIZE: usize = 10_000;
+
+struct BulkInserter {
+    requests: async_channel::Sender<Vec<indradb::BulkInsertItem>>,
+    workers: Vec<JoinHandle<()>>,
+    buf: Vec<indradb::BulkInsertItem>
+}
+
+impl Default for BulkInserter {
+    fn default() -> Self {
+        let (tx, rx) = async_channel::bounded::<Vec<indradb::BulkInsertItem>>(10);
+        let mut workers = Vec::default();
+
+        for _ in 0..10 {
+            let rx = rx.clone();
+            workers.push(tokio::spawn(async move {
+                let mut client = util::client().await.unwrap();
+                while let Ok(buf) = rx.recv().await {
+                    client.bulk_insert(buf.into_iter()).await.unwrap();
+                }
+            }));
+        }
+
+        Self {
+            requests: tx,
+            workers,
+            buf: Vec::with_capacity(REQUEST_BUFFER_SIZE),
+        }
+    }
+}
+
+impl BulkInserter {
+    async fn flush(self) {
+        if !self.buf.is_empty() {
+            self.requests.send(self.buf).await.unwrap();
+        }
+        self.requests.close();
+        for worker in self.workers.into_iter() {
+            worker.await.unwrap();
+        }
+    }
+
+    async fn push(&mut self, item: indradb::BulkInsertItem) {
+        self.buf.push(item);
+        if self.buf.len() >= REQUEST_BUFFER_SIZE {
+            let buf = replace(&mut self.buf, Vec::with_capacity(REQUEST_BUFFER_SIZE));
+            self.requests.send(buf).await.unwrap();
+        }
+    }
+}
+
+async fn insert_articles(article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
+    let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
+    progress.message("indexing articles: ");
+
+    let mut inserter = BulkInserter::default();
+    let article_type = indradb::Type::new("article").unwrap();
+
+    for (article_name, article_uuid) in &article_map.uuids {
+        inserter.push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(*article_uuid, article_type.clone()))).await;
+        inserter.push(indradb::BulkInsertItem::VertexProperty(*article_uuid, "name".to_string(), JsonValue::String(article_name.clone()))).await;
+        progress.inc();
+    }
+
+    inserter.flush().await;
+    progress.finish();
+    println!();
+    Ok(())
+}
+
+async fn insert_links(article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
+    let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
+    progress.message("indexing links: ");
+
+    let mut inserter = BulkInserter::default();
+    let link_type = indradb::Type::new("link").unwrap();
+
+    for (src_uuid, dst_uuids) in &article_map.links {
+        for dst_uuid in dst_uuids {
+            inserter.push(indradb::BulkInsertItem::Edge(indradb::EdgeKey::new(*src_uuid, link_type.clone(), *dst_uuid))).await;
+        }
+        progress.inc();
+    }
+
+    inserter.flush().await;
+    progress.finish();
+    println!();
+    Ok(())
+}
+
+pub async fn run(article_map: util::ArticleMap) -> Result<(), Box<dyn StdError>> {
+    insert_articles(&article_map).await.map_err(|err| err.compat())?;
+    insert_links(&article_map).await.map_err(|err| err.compat())?;
+    Ok(())
+}

@@ -5,16 +5,8 @@ authors = ["Yusuf Simonson <simonson@gmail.com>"]
 edition = "2018"
 
 [[bin]]
-name = "crawler"
-path = "src/crawler/main.rs"
-
-[[bin]]
-name = "explorer"
-path = "src/explorer/main.rs"
-
-[lib]
-name = "common"
-path = "src/common/lib.rs"
+name = "indradb-wikipedia"
+path = "src/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
