@@ -7,6 +7,7 @@ use indradb_proto as proto;
 use indradb::VertexQueryExt;
 use serde::Deserialize;
 use warp::Filter;
+use serde_json::Value as JsonValue;
 
 const INDEX: &str = r#"
 <form method="get" action="/article">
@@ -32,7 +33,7 @@ const ARTICLE_TEMPLATE: &str = r#"
         {% for edge in inbound_edges %}
             <tr>
                 <td>{{ edge.0 }}</td>
-                <td><a href="/?article={{ edge.1 | urlencode }}&action=get_article">{{ edge.1 }}</a></td>
+                <td><a href="/article?name={{ edge.1 | urlencode }}">{{ edge.1 }}</a></td>
             </tr>
         {% endfor %}
     </table>
@@ -104,7 +105,13 @@ async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, w
     };
 
     let inbound_edges: Vec<(String, String)> = name.iter()
-        .map(|p| (p.id.to_string(), p.value.to_string()))
+        .map(|p| {
+            if let JsonValue::String(s) = &p.value {
+                (p.id.to_string(), s.clone())
+            } else {
+                unreachable!();
+            }
+        })
         .collect();
 
     let mut context = tera::Context::new();
