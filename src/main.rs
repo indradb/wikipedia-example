@@ -16,7 +16,7 @@ pub struct Server(Child);
 // TODO: make port dynamic
 impl Server {
     pub fn start(database_path: &str) -> Result<Self, Box<dyn StdError>> {
-        let child = Command::new("indradb")
+        let child = Command::new("indradb-server")
             .args(&["rocksdb", database_path])
             .env("RUST_BACKTRACE", "1")
             .spawn()?;
