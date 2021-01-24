@@ -2,7 +2,7 @@
 
 data/enwiki-latest-pages-articles.xml.bz2:
 	mkdir -p data
-	cd data && wget enwiki-latest-pages-articles.xml.bz2
+	cd data && wget 'https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-pages-articles.xml.bz2'
 
 data/archive_dump.bincode: data/enwiki-latest-pages-articles.xml.bz2
 	cargo run --release -- parse \
