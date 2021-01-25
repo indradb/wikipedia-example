@@ -8,7 +8,7 @@ use indradb_proto as proto;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use tera::{Context as TeraContext, Tera};
-use warp::Filter;
+use warp::{http, reject, reply, Filter};
 
 const INDEX: &str = r#"
 <form method="get" action="/article">
@@ -47,32 +47,32 @@ enum Error {
     ArticleNotFound { name: String },
 }
 
-impl warp::reject::Reject for Error {}
+impl reject::Reject for Error {}
 
 fn map_result<T>(result: Result<T, proto::ClientError>) -> Result<T, warp::Rejection> {
-    result.map_err(|err| warp::reject::custom(Error::Client { err }))
+    result.map_err(|err| reject::custom(Error::Client { err }))
 }
 
-async fn handle_rejection(err: warp::reject::Rejection) -> Result<impl warp::Reply, Infallible> {
+async fn handle_rejection(err: reject::Rejection) -> Result<impl warp::Reply, Infallible> {
     let (status, message) = if let Some(err) = err.find::<Error>() {
         match err {
             Error::Client { err } => {
                 let message = format!("internal error: {}", err);
-                (warp::http::StatusCode::INTERNAL_SERVER_ERROR, message)
+                (http::StatusCode::INTERNAL_SERVER_ERROR, message)
             }
             Error::ArticleNotFound { name } => {
                 let message = format!("article not found: {}", name);
-                (warp::http::StatusCode::NOT_FOUND, message)
+                (http::StatusCode::NOT_FOUND, message)
             }
         }
     } else {
         (
-            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+            http::StatusCode::INTERNAL_SERVER_ERROR,
             "UNHANDLED_REJECTION".to_string(),
         )
     };
 
-    Ok(warp::reply::with_status(warp::reply::html(message), status))
+    Ok(reply::with_status(reply::html(message), status))
 }
 
 #[derive(Deserialize)]
@@ -81,7 +81,7 @@ struct ArticleQueryParams {
 }
 
 async fn handle_index() -> Result<impl warp::Reply, Infallible> {
-    Ok(warp::reply::html(INDEX))
+    Ok(reply::html(INDEX))
 }
 
 async fn handle_article(
@@ -96,7 +96,7 @@ async fn handle_article(
 
     let vertices = map_result(trans.get_vertices(vertex_query.clone()).await)?;
     if vertices.is_empty() {
-        return Err(warp::reject::custom(Error::ArticleNotFound {
+        return Err(reject::custom(Error::ArticleNotFound {
             name: query.name.clone(),
         }));
     }
@@ -133,7 +133,7 @@ async fn handle_article(
     context.insert("edge_count", &edge_count);
     context.insert("inbound_edges", &inbound_edges);
     let rendered = tera.render("article.html", &context).unwrap();
-    Ok(warp::reply::html(rendered))
+    Ok(reply::html(rendered))
 }
 
 fn with_client(client: proto::Client) -> impl Filter<Extract = (proto::Client,), Error = Infallible> + Clone {
