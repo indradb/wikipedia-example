@@ -1,22 +1,20 @@
-.PHONY: explorer clean
+.PHONY: explore
 
-venv:
-	virtualenv -p python3 venv
-	. venv/bin/activate && pip install -r requirements.txt
+data/enwiki-latest-pages-articles.xml.bz2:
+	mkdir -p data
+	cd data && wget 'https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-pages-articles.xml.bz2'
 
-data:
-	mkdir data
+data/archive_dump.bincode: data/enwiki-latest-pages-articles.xml.bz2
+	cargo run --release -- parse \
+		--archive-path data/enwiki-latest-pages-articles.xml.bz2 \
+		--dump-path data/archive_dump.bincode
 
-data/wikipedia.sled: data
-	. venv/bin/activate && ./server.py
-	cd inserter && cargo build --release
-	./inserter/target/release/indradb-wikipedia-inserter enwiki-latest-pages-articles.xml.bz2 data/archive_dump.bincode
-	. venv/bin/activate && ./server.py --stop
+data/wikipedia.rdb: data/archive_dump.bincode
+	time cargo run --release -- index \
+		--dump-path data/archive_dump.bincode \
+		--database-path data/wikipedia.rdb
 
-explorer: data/wikipedia.sled venv
-	. venv/bin/activate && ./server.py
-	. venv/bin/activate && python explorer.py
-	. venv/bin/activate && ./server.py --stop
+explore: data/wikipedia.rdb
+	cargo run --release -- explore --database-path data/wikipedia.rdb
 
-clean:
-	rm -rf venv data
+default: explore
