@@ -7,30 +7,40 @@ mod indexer;
 mod explorer;
 
 use std::error::Error as StdError;
+use std::process::{Command, Stdio};
+use std::io::{BufRead, BufReader};
+use std::convert::TryInto;
+
+use indradb_proto as proto;
 use clap::{App, SubCommand, Arg};
-use std::process::{Command, Child};
+use tonic::transport::Endpoint;
+use failure::Fail;
 
-pub struct Server(Child);
+pub struct Server {
+    child_id: i32,
+    address: String
+}
 
-// TODO: suppress stdout
-// TODO: make port dynamic
 impl Server {
     pub fn start(database_path: &str) -> Result<Self, Box<dyn StdError>> {
         let child = Command::new("indradb-server")
-            .args(&["rocksdb", database_path])
+            .args(&["--address", "127.0.0.1:0", "rocksdb", database_path])
             .env("RUST_BACKTRACE", "1")
+            .stdout(Stdio::piped())
             .spawn()?;
 
-        Ok(Self { 0: child })
+        let child_id = child.id() as i32;
+        let mut lines = BufReader::new(child.stdout.unwrap()).lines();
+        let address = lines.next().unwrap()?;
+        Ok(Server { child_id, address })
     }
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
         unsafe {
-            libc::kill(self.0.id() as i32, libc::SIGTERM);
+            libc::kill(self.child_id, libc::SIGTERM);
         }
-        self.0.wait().unwrap();
     }
 }
 
@@ -78,14 +88,18 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
     } else if let Some(matches) = matches.subcommand_matches("index") {
         let archive_dump_path = matches.value_of("DUMP_PATH").unwrap();
         let database_path = matches.value_of("DATABASE_PATH").unwrap();
-        let _server = Server::start(database_path)?;
+        let server = Server::start(database_path)?;
+        let endpoint: Endpoint = server.address.clone().try_into()?;
+        let client = proto::Client::new(endpoint).await.map_err(|err| err.compat())?;
         let article_map = parser::read_dump(archive_dump_path)?;
-        indexer::run(article_map).await
+        indexer::run(client, article_map).await
     } else if let Some(matches) = matches.subcommand_matches("explore") {
         let database_path = matches.value_of("DATABASE_PATH").unwrap();
         let port = value_t!(matches.value_of("PORT"), u16).unwrap_or_else(|err| err.exit());
-        let _server = Server::start(database_path)?;
-        explorer::run(port).await
+        let server = Server::start(database_path)?;
+        let endpoint: Endpoint = server.address.clone().try_into()?;
+        let client = proto::Client::new(endpoint).await.map_err(|err| err.compat())?;
+        explorer::run(client, port).await
     } else {
         panic!("no subcommand specified");
     }

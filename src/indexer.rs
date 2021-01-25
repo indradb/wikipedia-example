@@ -17,15 +17,15 @@ struct BulkInserter {
     buf: Vec<indradb::BulkInsertItem>
 }
 
-impl Default for BulkInserter {
-    fn default() -> Self {
+impl BulkInserter {
+    fn new(client: proto::Client) -> Self {
         let (tx, rx) = async_channel::bounded::<Vec<indradb::BulkInsertItem>>(10);
         let mut workers = Vec::default();
 
         for _ in 0..10 {
             let rx = rx.clone();
+            let mut client = client.clone();
             workers.push(tokio::spawn(async move {
-                let mut client = util::client().await.unwrap();
                 while let Ok(buf) = rx.recv().await {
                     client.bulk_insert(buf.into_iter()).await.unwrap();
                 }
@@ -38,9 +38,7 @@ impl Default for BulkInserter {
             buf: Vec::with_capacity(REQUEST_BUFFER_SIZE),
         }
     }
-}
 
-impl BulkInserter {
     async fn flush(self) {
         if !self.buf.is_empty() {
             self.requests.send(self.buf).await.unwrap();
@@ -60,11 +58,11 @@ impl BulkInserter {
     }
 }
 
-async fn insert_articles(article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
+async fn insert_articles(client: proto::Client, article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
     let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
     progress.message("indexing articles: ");
 
-    let mut inserter = BulkInserter::default();
+    let mut inserter = BulkInserter::new(client);
     let article_type = indradb::Type::new("article").unwrap();
 
     for (article_name, article_uuid) in &article_map.uuids {
@@ -79,11 +77,11 @@ async fn insert_articles(article_map: &util::ArticleMap) -> Result<(), proto::Cl
     Ok(())
 }
 
-async fn insert_links(article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
+async fn insert_links(client: proto::Client, article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
     let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
     progress.message("indexing links: ");
 
-    let mut inserter = BulkInserter::default();
+    let mut inserter = BulkInserter::new(client);
     let link_type = indradb::Type::new("link").unwrap();
 
     for (src_uuid, dst_uuids) in &article_map.links {
@@ -99,8 +97,8 @@ async fn insert_links(article_map: &util::ArticleMap) -> Result<(), proto::Clien
     Ok(())
 }
 
-pub async fn run(article_map: util::ArticleMap) -> Result<(), Box<dyn StdError>> {
-    insert_articles(&article_map).await.map_err(|err| err.compat())?;
-    insert_links(&article_map).await.map_err(|err| err.compat())?;
+pub async fn run(client: proto::Client, article_map: util::ArticleMap) -> Result<(), Box<dyn StdError>> {
+    insert_articles(client.clone(), &article_map).await.map_err(|err| err.compat())?;
+    insert_links(client, &article_map).await.map_err(|err| err.compat())?;
     Ok(())
 }

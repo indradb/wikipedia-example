@@ -8,6 +8,7 @@ use indradb::VertexQueryExt;
 use serde::Deserialize;
 use warp::Filter;
 use serde_json::Value as JsonValue;
+use tera::{Context as TeraContext, Tera};
 
 const INDEX: &str = r#"
 <form method="get" action="/article">
@@ -80,12 +81,10 @@ async fn handle_index() -> Result<impl warp::Reply, Infallible> {
     Ok(warp::reply::html(INDEX))
 }
 
-// TODO: this could be optimized quite a bit, by moving tera and IndraDB client construction out
-async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_article(mut client: proto::Client, tera: Tera, query: ArticleQueryParams) -> Result<impl warp::Reply, warp::Rejection> {
     let article_id = util::article_uuid(&query.name);
     let vertex_query = indradb::SpecificVertexQuery::single(article_id);
 
-    let mut client = map_result(util::client().await)?;
     let mut trans = map_result(client.transaction().await)?;
 
     let vertices = map_result(trans.get_vertices(vertex_query.clone()).await)?;
@@ -114,22 +113,35 @@ async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, w
         })
         .collect();
 
-    let mut context = tera::Context::new();
+    let mut context = TeraContext::new();
     context.insert("article_name", &query.name);
     context.insert("article_id", &article_id.to_string());
     context.insert("edge_count", &edge_count);
     context.insert("inbound_edges", &inbound_edges);
-    let rendered = tera::Tera::one_off(ARTICLE_TEMPLATE, &context, true).unwrap();
+    let rendered = tera.render("article.html", &context).unwrap();
     Ok(warp::reply::html(rendered))
 }
 
-pub async fn run(port: u16) -> Result<(), Box<dyn StdError>> {
+fn with_client(client: proto::Client) -> impl Filter<Extract = (proto::Client,), Error = Infallible> + Clone {
+    warp::any().map(move || client.clone())
+}
+
+fn with_templating(tera: Tera) -> impl Filter<Extract = (Tera,), Error = Infallible> + Clone {
+    warp::any().map(move || tera.clone())
+}
+
+pub async fn run(client: proto::Client, port: u16) -> Result<(), Box<dyn StdError>> {
+    let mut tera = Tera::default();
+    tera.add_raw_templates(vec![("article.html", ARTICLE_TEMPLATE)])?;
+
     let index_route = warp::path::end()
         .and(warp::get())
         .and_then(handle_index);
 
     let article_route = warp::path("article")
         .and(warp::get())
+        .and(with_client(client.clone()))
+        .and(with_templating(tera.clone()))
         .and(warp::query::<ArticleQueryParams>())
         .and_then(handle_article);
 

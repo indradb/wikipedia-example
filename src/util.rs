@@ -1,10 +1,7 @@
-use std::convert::TryInto;
 use std::collections::{HashMap, HashSet};
 
-use indradb_proto as proto;
 use blake2b_simd::Params;
 use uuid::Uuid;
-use tonic::transport::Endpoint;
 use serde::{Serialize, Deserialize};
 
 lazy_static! {
@@ -51,9 +48,4 @@ impl ArticleMap {
 pub fn article_uuid<T: AsRef<[u8]>>(name: T) -> Uuid {
     let hash = HASHER_PARAMS.hash(name.as_ref());
     Uuid::from_slice(hash.as_bytes()).unwrap()
-}
-
-pub async fn client() -> Result<proto::Client, proto::ClientError> {
-    let endpoint: Endpoint = "http://127.0.0.1:27615".try_into().unwrap();
-    proto::Client::new(endpoint).await
 }
