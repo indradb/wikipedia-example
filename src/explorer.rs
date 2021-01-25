@@ -88,7 +88,7 @@ async fn handle_article(mut client: proto::Client, tera: Tera, query: ArticleQue
     let mut trans = map_result(client.transaction().await)?;
 
     let vertices = map_result(trans.get_vertices(vertex_query.clone()).await)?;
-    if vertices.len() == 0 {
+    if vertices.is_empty() {
         return Err(warp::reject::custom(Error::ArticleNotFound { name: query.name.clone() }));
     }
 
