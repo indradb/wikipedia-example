@@ -5,8 +5,8 @@ use super::util;
 
 use failure::Fail;
 use indradb_proto as proto;
-use serde_json::value::Value as JsonValue;
 use pbr::ProgressBar;
+use serde_json::value::Value as JsonValue;
 use tokio::task::JoinHandle;
 
 const REQUEST_BUFFER_SIZE: usize = 10_000;
@@ -14,7 +14,7 @@ const REQUEST_BUFFER_SIZE: usize = 10_000;
 struct BulkInserter {
     requests: async_channel::Sender<Vec<indradb::BulkInsertItem>>,
     workers: Vec<JoinHandle<()>>,
-    buf: Vec<indradb::BulkInsertItem>
+    buf: Vec<indradb::BulkInsertItem>,
 }
 
 impl BulkInserter {
@@ -66,8 +66,19 @@ async fn insert_articles(client: proto::Client, article_map: &util::ArticleMap) 
     let article_type = indradb::Type::new("article").unwrap();
 
     for (article_name, article_uuid) in &article_map.uuids {
-        inserter.push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(*article_uuid, article_type.clone()))).await;
-        inserter.push(indradb::BulkInsertItem::VertexProperty(*article_uuid, "name".to_string(), JsonValue::String(article_name.clone()))).await;
+        inserter
+            .push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(
+                *article_uuid,
+                article_type.clone(),
+            )))
+            .await;
+        inserter
+            .push(indradb::BulkInsertItem::VertexProperty(
+                *article_uuid,
+                "name".to_string(),
+                JsonValue::String(article_name.clone()),
+            ))
+            .await;
         progress.inc();
     }
 
@@ -86,7 +97,13 @@ async fn insert_links(client: proto::Client, article_map: &util::ArticleMap) -> 
 
     for (src_uuid, dst_uuids) in &article_map.links {
         for dst_uuid in dst_uuids {
-            inserter.push(indradb::BulkInsertItem::Edge(indradb::EdgeKey::new(*src_uuid, link_type.clone(), *dst_uuid))).await;
+            inserter
+                .push(indradb::BulkInsertItem::Edge(indradb::EdgeKey::new(
+                    *src_uuid,
+                    link_type.clone(),
+                    *dst_uuid,
+                )))
+                .await;
         }
         progress.inc();
     }
@@ -98,7 +115,9 @@ async fn insert_links(client: proto::Client, article_map: &util::ArticleMap) -> 
 }
 
 pub async fn run(client: proto::Client, article_map: util::ArticleMap) -> Result<(), Box<dyn StdError>> {
-    insert_articles(client.clone(), &article_map).await.map_err(|err| err.compat())?;
+    insert_articles(client.clone(), &article_map)
+        .await
+        .map_err(|err| err.compat())?;
     insert_links(client, &article_map).await.map_err(|err| err.compat())?;
     Ok(())
 }

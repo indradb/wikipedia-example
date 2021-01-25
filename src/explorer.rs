@@ -1,14 +1,14 @@
-use std::error::Error as StdError;
 use std::convert::Infallible;
+use std::error::Error as StdError;
 
 use super::util;
 
-use indradb_proto as proto;
 use indradb::VertexQueryExt;
+use indradb_proto as proto;
 use serde::Deserialize;
-use warp::Filter;
 use serde_json::Value as JsonValue;
 use tera::{Context as TeraContext, Tera};
+use warp::Filter;
 
 const INDEX: &str = r#"
 <form method="get" action="/article">
@@ -44,7 +44,7 @@ const ARTICLE_TEMPLATE: &str = r#"
 #[derive(Debug)]
 enum Error {
     Client { err: proto::ClientError },
-    ArticleNotFound { name: String }
+    ArticleNotFound { name: String },
 }
 
 impl warp::reject::Reject for Error {}
@@ -59,14 +59,17 @@ async fn handle_rejection(err: warp::reject::Rejection) -> Result<impl warp::Rep
             Error::Client { err } => {
                 let message = format!("internal error: {}", err);
                 (warp::http::StatusCode::INTERNAL_SERVER_ERROR, message)
-            },
+            }
             Error::ArticleNotFound { name } => {
                 let message = format!("article not found: {}", name);
                 (warp::http::StatusCode::NOT_FOUND, message)
             }
         }
     } else {
-        (warp::http::StatusCode::INTERNAL_SERVER_ERROR, "UNHANDLED_REJECTION".to_string())
+        (
+            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "UNHANDLED_REJECTION".to_string(),
+        )
     };
 
     Ok(warp::reply::with_status(warp::reply::html(message), status))
@@ -74,14 +77,18 @@ async fn handle_rejection(err: warp::reject::Rejection) -> Result<impl warp::Rep
 
 #[derive(Deserialize)]
 struct ArticleQueryParams {
-    name: String
+    name: String,
 }
 
 async fn handle_index() -> Result<impl warp::Reply, Infallible> {
     Ok(warp::reply::html(INDEX))
 }
 
-async fn handle_article(mut client: proto::Client, tera: Tera, query: ArticleQueryParams) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_article(
+    mut client: proto::Client,
+    tera: Tera,
+    query: ArticleQueryParams,
+) -> Result<impl warp::Reply, warp::Rejection> {
     let article_id = util::article_uuid(&query.name);
     let vertex_query = indradb::SpecificVertexQuery::single(article_id);
 
@@ -89,21 +96,28 @@ async fn handle_article(mut client: proto::Client, tera: Tera, query: ArticleQue
 
     let vertices = map_result(trans.get_vertices(vertex_query.clone()).await)?;
     if vertices.is_empty() {
-        return Err(warp::reject::custom(Error::ArticleNotFound { name: query.name.clone() }));
+        return Err(warp::reject::custom(Error::ArticleNotFound {
+            name: query.name.clone(),
+        }));
     }
 
-    let edge_count = map_result(trans.get_edge_count(article_id, None, indradb::EdgeDirection::Outbound).await)?;
+    let edge_count = map_result(
+        trans
+            .get_edge_count(article_id, None, indradb::EdgeDirection::Outbound)
+            .await,
+    )?;
     let edges = map_result(trans.get_edges(vertex_query.outbound()).await)?;
 
     let name = {
         let q = indradb::VertexPropertyQuery::new(
             indradb::SpecificVertexQuery::new(edges.iter().map(|e| e.key.inbound_id).collect()).into(),
-            "name"
+            "name",
         );
         map_result(trans.get_vertex_properties(q).await)?
     };
 
-    let inbound_edges: Vec<(String, String)> = name.iter()
+    let inbound_edges: Vec<(String, String)> = name
+        .iter()
         .map(|p| {
             if let JsonValue::String(s) = &p.value {
                 (p.id.to_string(), s.clone())
@@ -134,9 +148,7 @@ pub async fn run(client: proto::Client, port: u16) -> Result<(), Box<dyn StdErro
     let mut tera = Tera::default();
     tera.add_raw_templates(vec![("article.html", ARTICLE_TEMPLATE)])?;
 
-    let index_route = warp::path::end()
-        .and(warp::get())
-        .and_then(handle_index);
+    let index_route = warp::path::end().and(warp::get()).and_then(handle_index);
 
     let article_route = warp::path("article")
         .and(warp::get())
@@ -145,9 +157,7 @@ pub async fn run(client: proto::Client, port: u16) -> Result<(), Box<dyn StdErro
         .and(warp::query::<ArticleQueryParams>())
         .and_then(handle_article);
 
-    let routes = index_route
-        .or(article_route)
-        .recover(handle_rejection);
+    let routes = index_route.or(article_route).recover(handle_rejection);
 
     warp::serve(routes).run(([127, 0, 0, 1], port)).await;
 

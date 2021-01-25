@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use blake2b_simd::Params;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
 
 lazy_static! {
     static ref HASHER_PARAMS: Params = {
@@ -16,7 +16,7 @@ lazy_static! {
 #[derive(Serialize, Deserialize)]
 pub struct ArticleMap {
     pub uuids: HashMap<String, Uuid>,
-    pub links: HashMap<Uuid, HashSet<Uuid>>
+    pub links: HashMap<Uuid, HashSet<Uuid>>,
 }
 
 impl Default for ArticleMap {

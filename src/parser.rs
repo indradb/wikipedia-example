@@ -1,23 +1,15 @@
-use std::fs::File;
-use std::io::{BufReader, Write, stdout};
 use std::error::Error as StdError;
+use std::fs::File;
+use std::io::{stdout, BufReader, Write};
 use std::str;
 
 use super::util::ArticleMap;
 
 use bzip2::bufread::BzDecoder;
-use quick_xml::{Reader, events::Event};
+use quick_xml::{events::Event, Reader};
 use regex::Regex;
 
-const ARTICLE_NAME_PREFIX_BLACKLIST: [&str; 7] = [
-    "Wikipedia:",
-    "WP:",
-    ":",
-    "File:",
-    "Image:",
-    "Template:",
-    "User:",
-];
+const ARTICLE_NAME_PREFIX_BLACKLIST: [&str; 7] = ["Wikipedia:", "WP:", ":", "File:", "Image:", "Template:", "User:"];
 
 const REDIRECT_PREFIX: &str = "#REDIRECT [[";
 
@@ -60,16 +52,14 @@ fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
                 src = String::new();
                 content = String::new();
                 ArchiveReadState::Page
-            },
+            }
             (ArchiveReadState::Page, Event::Start(ref e)) if e.name() == revision_tag => {
                 ArchiveReadState::MostRecentRevision
-            },
-            (ArchiveReadState::Page, Event::Start(ref e)) if e.name() == title_tag => {
-                ArchiveReadState::Title
-            },
+            }
+            (ArchiveReadState::Page, Event::Start(ref e)) if e.name() == title_tag => ArchiveReadState::Title,
             (ArchiveReadState::MostRecentRevision, Event::Start(ref e)) if e.name() == text_tag => {
                 ArchiveReadState::Text
-            },
+            }
             (ArchiveReadState::MostRecentRevision, Event::End(ref e)) if e.name() == revision_tag => {
                 content = content.trim().to_string();
                 debug_assert!(!src.is_empty());
@@ -83,24 +73,22 @@ fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
                 }
 
                 ArchiveReadState::Ignore
-            },
+            }
             (ArchiveReadState::Title, Event::Text(ref e)) => {
                 debug_assert!(src.is_empty());
                 src.push_str(str::from_utf8(e)?);
 
-                let blacklisted = ARTICLE_NAME_PREFIX_BLACKLIST.iter().any(|prefix| {
-                    src.starts_with(prefix)
-                });
+                let blacklisted = ARTICLE_NAME_PREFIX_BLACKLIST
+                    .iter()
+                    .any(|prefix| src.starts_with(prefix));
 
                 if blacklisted {
                     ArchiveReadState::Ignore
                 } else {
                     ArchiveReadState::Title
                 }
-            },
-            (ArchiveReadState::Title, Event::End(ref e)) if e.name() == title_tag => {
-                ArchiveReadState::Page
-            },
+            }
+            (ArchiveReadState::Title, Event::End(ref e)) if e.name() == title_tag => ArchiveReadState::Page,
             (ArchiveReadState::Text, Event::Text(ref e)) => {
                 debug_assert!(content.is_empty());
                 content.push_str(str::from_utf8(e)?);
@@ -112,12 +100,10 @@ fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
                 } else {
                     ArchiveReadState::Text
                 }
-            },
-            (ArchiveReadState::Text, Event::End(ref e)) if e.name() == text_tag => {
-                ArchiveReadState::MostRecentRevision
-            },
+            }
+            (ArchiveReadState::Text, Event::End(ref e)) if e.name() == text_tag => ArchiveReadState::MostRecentRevision,
             (_, Event::Eof) => break,
-            (state, _) => state
+            (state, _) => state,
         };
 
         buf.clear();

@@ -1,24 +1,26 @@
-#[macro_use] extern crate clap;
-#[macro_use] extern crate lazy_static;
+#[macro_use]
+extern crate clap;
+#[macro_use]
+extern crate lazy_static;
 
-mod util;
-mod parser;
-mod indexer;
 mod explorer;
+mod indexer;
+mod parser;
+mod util;
 
-use std::error::Error as StdError;
-use std::process::{Command, Stdio};
-use std::io::{BufRead, BufReader};
 use std::convert::TryInto;
+use std::error::Error as StdError;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 
-use indradb_proto as proto;
-use clap::{App, SubCommand, Arg};
-use tonic::transport::Endpoint;
+use clap::{App, Arg, SubCommand};
 use failure::Fail;
+use indradb_proto as proto;
+use tonic::transport::Endpoint;
 
 pub struct Server {
     child_id: i32,
-    address: String
+    address: String,
 }
 
 impl Server {
@@ -77,7 +79,11 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
     let matches = App::new("IndraDB wikipedia example")
         .about("demonstrates IndraDB with the wikipedia dataset")
         .subcommand(SubCommand::with_name("parse").arg(&archive_arg).arg(&archive_dump_arg))
-        .subcommand(SubCommand::with_name("index").arg(&archive_dump_arg).arg(&datastore_arg))
+        .subcommand(
+            SubCommand::with_name("index")
+                .arg(&archive_dump_arg)
+                .arg(&datastore_arg),
+        )
         .subcommand(SubCommand::with_name("explore").arg(&datastore_arg).arg(&port_arg))
         .get_matches();
 
