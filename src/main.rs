@@ -11,7 +11,7 @@ mod util;
 use std::convert::TryInto;
 use std::error::Error as StdError;
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::{Command, Stdio, Child};
 
 use clap::{App, Arg, SubCommand};
 use failure::Fail;
@@ -19,30 +19,30 @@ use indradb_proto as proto;
 use tonic::transport::Endpoint;
 
 pub struct Server {
-    child_id: i32,
+    child: Child,
     address: String,
 }
 
 impl Server {
     pub fn start(database_path: &str) -> Result<Self, Box<dyn StdError>> {
-        let child = Command::new("indradb/target/release/indradb-server")
+        let mut child = Command::new("indradb/target/release/indradb-server")
             .args(&["--address", "127.0.0.1:0", "rocksdb", database_path])
             .env("RUST_BACKTRACE", "1")
             .stdout(Stdio::piped())
             .spawn()?;
 
-        let child_id = child.id() as i32;
-        let mut lines = BufReader::new(child.stdout.unwrap()).lines();
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
         let address = lines.next().unwrap()?;
-        Ok(Server { child_id, address })
+        Ok(Server { child, address })
     }
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
         unsafe {
-            libc::kill(self.child_id, libc::SIGTERM);
+            libc::kill(self.child.id() as i32, libc::SIGTERM);
         }
+        self.child.wait().unwrap();
     }
 }
 

@@ -1,4 +1,8 @@
-.PHONY: explore
+.PHONY: explore init
+
+init:
+	git submodule update --init --recursive
+	make data/wikipedia.rdb
 
 indradb/target/release/indradb-server:
 	cd indradb/server && cargo build --release
