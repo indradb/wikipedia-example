@@ -25,7 +25,7 @@ pub struct Server {
 
 impl Server {
     pub fn start(database_path: &str) -> Result<Self, Box<dyn StdError>> {
-        let child = Command::new("indradb-server")
+        let child = Command::new("indradb/target/release/indradb-server")
             .args(&["--address", "127.0.0.1:0", "rocksdb", database_path])
             .env("RUST_BACKTRACE", "1")
             .stdout(Stdio::piped())

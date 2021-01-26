@@ -16,8 +16,8 @@ uuid = { version = "0.8.1", features = ["serde"] }
 blake2b_simd = "0.5.11"
 pbr = "1"
 tonic = "0.3.1"
-indradb-lib = { version = "2.0.0", path = "../indradb/lib" }
-indradb-proto = { version = "2.0.0", path = "../indradb/proto" }
+indradb-lib = { path = "indradb/lib" }
+indradb-proto = { path = "indradb/proto" }
 libc = "0.2.80"
 clap = "2"
 bzip2 = "0.4.1"

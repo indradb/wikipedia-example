@@ -783,7 +783,7 @@ dependencies = [
  "chrono",
  "failure",
  "lazy_static",
- "rand 0.7.3",
+ "rand 0.8.2",
  "regex",
  "serde_json",
  "uuid",
