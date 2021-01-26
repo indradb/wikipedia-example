@@ -115,8 +115,7 @@ fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
         }
     }
 
-    println!("\rreading archive: done");
-
+    println!();
     Ok(article_map)
 }
 
