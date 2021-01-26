@@ -59,7 +59,7 @@ impl BulkInserter {
 }
 
 async fn insert_articles(client: proto::Client, article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
-    let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
+    let mut progress = ProgressBar::new(article_map.article_len());
     progress.message("indexing articles: ");
 
     let mut inserter = BulkInserter::new(client);
@@ -89,7 +89,7 @@ async fn insert_articles(client: proto::Client, article_map: &util::ArticleMap) 
 }
 
 async fn insert_links(client: proto::Client, article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
-    let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
+    let mut progress = ProgressBar::new(article_map.link_len());
     progress.message("indexing links: ");
 
     let mut inserter = BulkInserter::new(client);
@@ -105,7 +105,7 @@ async fn insert_links(client: proto::Client, article_map: &util::ArticleMap) -> 
                 )))
                 .await;
         }
-        progress.inc();
+        progress.add(dst_uuids.len() as u64);
     }
 
     inserter.flush().await;

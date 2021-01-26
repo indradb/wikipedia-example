@@ -43,6 +43,14 @@ impl ArticleMap {
         let container = self.links.entry(src_uuid).or_insert_with(HashSet::default);
         container.insert(dst_uuid);
     }
+
+    pub fn article_len(&self) -> u64 {
+        self.uuids.len() as u64
+    }
+
+    pub fn link_len(&self) -> u64 {
+        self.links.iter().map(|(_, v)| v.len()).sum::<usize>() as u64
+    }
 }
 
 pub fn article_uuid<T: AsRef<[u8]>>(name: T) -> Uuid {

@@ -11,7 +11,7 @@ mod util;
 use std::convert::TryInto;
 use std::error::Error as StdError;
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio, Child};
+use std::process::{Child, Command, Stdio};
 
 use clap::{App, Arg, SubCommand};
 use failure::Fail;
