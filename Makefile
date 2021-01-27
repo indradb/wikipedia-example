@@ -12,7 +12,7 @@ data/enwiki-latest-pages-articles.xml.bz2:
 	cd data && wget 'https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-pages-articles.xml.bz2'
 
 data/archive_dump.bincode: data/enwiki-latest-pages-articles.xml.bz2
-	cargo run --release -- parse \
+	time cargo run --release -- parse \
 		--archive-path data/enwiki-latest-pages-articles.xml.bz2 \
 		--dump-path data/archive_dump.bincode
 

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use blake2b_simd::Params;
 use serde::{Deserialize, Serialize};
@@ -12,18 +12,17 @@ lazy_static! {
     };
 }
 
-// TODO: investigate memory/speed tradeoff of BTreeMap vs HashMap here
 #[derive(Serialize, Deserialize)]
 pub struct ArticleMap {
-    pub uuids: HashMap<String, Uuid>,
-    pub links: HashMap<Uuid, HashSet<Uuid>>,
+    pub uuids: BTreeMap<String, Uuid>,
+    pub links: BTreeMap<Uuid, BTreeSet<Uuid>>,
 }
 
 impl Default for ArticleMap {
     fn default() -> Self {
         Self {
-            uuids: HashMap::default(),
-            links: HashMap::default(),
+            uuids: BTreeMap::default(),
+            links: BTreeMap::default(),
         }
     }
 }
@@ -40,7 +39,7 @@ impl ArticleMap {
     }
 
     pub fn insert_link(&mut self, src_uuid: Uuid, dst_uuid: Uuid) {
-        let container = self.links.entry(src_uuid).or_insert_with(HashSet::default);
+        let container = self.links.entry(src_uuid).or_insert_with(BTreeSet::default);
         container.insert(dst_uuid);
     }
 
