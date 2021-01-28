@@ -1,36 +1,48 @@
-#[macro_use] extern crate clap;
-#[macro_use] extern crate lazy_static;
+#[macro_use]
+extern crate clap;
+#[macro_use]
+extern crate lazy_static;
 
-mod util;
-mod parser;
-mod indexer;
 mod explorer;
+mod indexer;
+mod parser;
+mod util;
 
+use std::convert::TryInto;
 use std::error::Error as StdError;
-use clap::{App, SubCommand, Arg};
-use std::process::{Command, Child};
+use std::io::{BufRead, BufReader};
+use std::process::{Child, Command, Stdio};
 
-pub struct Server(Child);
+use clap::{App, Arg, SubCommand};
+use failure::Fail;
+use indradb_proto as proto;
+use tonic::transport::Endpoint;
 
-// TODO: suppress stdout
-// TODO: make port dynamic
+pub struct Server {
+    child: Child,
+    address: String,
+}
+
 impl Server {
     pub fn start(database_path: &str) -> Result<Self, Box<dyn StdError>> {
-        let child = Command::new("indradb-server")
-            .args(&["rocksdb", database_path])
+        let mut child = Command::new("indradb/target/release/indradb-server")
+            .args(&["--address", "127.0.0.1:0", "rocksdb", database_path])
             .env("RUST_BACKTRACE", "1")
+            .stdout(Stdio::piped())
             .spawn()?;
 
-        Ok(Self { 0: child })
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let address = lines.next().unwrap()?;
+        Ok(Server { child, address })
     }
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
         unsafe {
-            libc::kill(self.0.id() as i32, libc::SIGTERM);
+            libc::kill(self.child.id() as i32, libc::SIGTERM);
         }
-        self.0.wait().unwrap();
+        self.child.wait().unwrap();
     }
 }
 
@@ -67,7 +79,11 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
     let matches = App::new("IndraDB wikipedia example")
         .about("demonstrates IndraDB with the wikipedia dataset")
         .subcommand(SubCommand::with_name("parse").arg(&archive_arg).arg(&archive_dump_arg))
-        .subcommand(SubCommand::with_name("index").arg(&archive_dump_arg).arg(&datastore_arg))
+        .subcommand(
+            SubCommand::with_name("index")
+                .arg(&archive_dump_arg)
+                .arg(&datastore_arg),
+        )
         .subcommand(SubCommand::with_name("explore").arg(&datastore_arg).arg(&port_arg))
         .get_matches();
 
@@ -78,14 +94,18 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
     } else if let Some(matches) = matches.subcommand_matches("index") {
         let archive_dump_path = matches.value_of("DUMP_PATH").unwrap();
         let database_path = matches.value_of("DATABASE_PATH").unwrap();
-        let _server = Server::start(database_path)?;
+        let server = Server::start(database_path)?;
+        let endpoint: Endpoint = server.address.clone().try_into()?;
+        let client = proto::Client::new(endpoint).await.map_err(|err| err.compat())?;
         let article_map = parser::read_dump(archive_dump_path)?;
-        indexer::run(article_map).await
+        indexer::run(client, article_map).await
     } else if let Some(matches) = matches.subcommand_matches("explore") {
         let database_path = matches.value_of("DATABASE_PATH").unwrap();
         let port = value_t!(matches.value_of("PORT"), u16).unwrap_or_else(|err| err.exit());
-        let _server = Server::start(database_path)?;
-        explorer::run(port).await
+        let server = Server::start(database_path)?;
+        let endpoint: Endpoint = server.address.clone().try_into()?;
+        let client = proto::Client::new(endpoint).await.map_err(|err| err.compat())?;
+        explorer::run(client, port).await
     } else {
         panic!("no subcommand specified");
     }

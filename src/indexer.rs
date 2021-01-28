@@ -5,8 +5,8 @@ use super::util;
 
 use failure::Fail;
 use indradb_proto as proto;
-use serde_json::value::Value as JsonValue;
 use pbr::ProgressBar;
+use serde_json::value::Value as JsonValue;
 use tokio::task::JoinHandle;
 
 const REQUEST_BUFFER_SIZE: usize = 10_000;
@@ -14,18 +14,18 @@ const REQUEST_BUFFER_SIZE: usize = 10_000;
 struct BulkInserter {
     requests: async_channel::Sender<Vec<indradb::BulkInsertItem>>,
     workers: Vec<JoinHandle<()>>,
-    buf: Vec<indradb::BulkInsertItem>
+    buf: Vec<indradb::BulkInsertItem>,
 }
 
-impl Default for BulkInserter {
-    fn default() -> Self {
+impl BulkInserter {
+    fn new(client: proto::Client) -> Self {
         let (tx, rx) = async_channel::bounded::<Vec<indradb::BulkInsertItem>>(10);
         let mut workers = Vec::default();
 
         for _ in 0..10 {
             let rx = rx.clone();
+            let mut client = client.clone();
             workers.push(tokio::spawn(async move {
-                let mut client = util::client().await.unwrap();
                 while let Ok(buf) = rx.recv().await {
                     client.bulk_insert(buf.into_iter()).await.unwrap();
                 }
@@ -38,9 +38,7 @@ impl Default for BulkInserter {
             buf: Vec::with_capacity(REQUEST_BUFFER_SIZE),
         }
     }
-}
 
-impl BulkInserter {
     async fn flush(self) {
         if !self.buf.is_empty() {
             self.requests.send(self.buf).await.unwrap();
@@ -60,16 +58,27 @@ impl BulkInserter {
     }
 }
 
-async fn insert_articles(article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
-    let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
+async fn insert_articles(client: proto::Client, article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
+    let mut progress = ProgressBar::new(article_map.article_len());
     progress.message("indexing articles: ");
 
-    let mut inserter = BulkInserter::default();
+    let mut inserter = BulkInserter::new(client);
     let article_type = indradb::Type::new("article").unwrap();
 
     for (article_name, article_uuid) in &article_map.uuids {
-        inserter.push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(*article_uuid, article_type.clone()))).await;
-        inserter.push(indradb::BulkInsertItem::VertexProperty(*article_uuid, "name".to_string(), JsonValue::String(article_name.clone()))).await;
+        inserter
+            .push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(
+                *article_uuid,
+                article_type.clone(),
+            )))
+            .await;
+        inserter
+            .push(indradb::BulkInsertItem::VertexProperty(
+                *article_uuid,
+                "name".to_string(),
+                JsonValue::String(article_name.clone()),
+            ))
+            .await;
         progress.inc();
     }
 
@@ -79,18 +88,24 @@ async fn insert_articles(article_map: &util::ArticleMap) -> Result<(), proto::Cl
     Ok(())
 }
 
-async fn insert_links(article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
-    let mut progress = ProgressBar::new(article_map.uuids.len() as u64);
+async fn insert_links(client: proto::Client, article_map: &util::ArticleMap) -> Result<(), proto::ClientError> {
+    let mut progress = ProgressBar::new(article_map.link_len());
     progress.message("indexing links: ");
 
-    let mut inserter = BulkInserter::default();
+    let mut inserter = BulkInserter::new(client);
     let link_type = indradb::Type::new("link").unwrap();
 
     for (src_uuid, dst_uuids) in &article_map.links {
         for dst_uuid in dst_uuids {
-            inserter.push(indradb::BulkInsertItem::Edge(indradb::EdgeKey::new(*src_uuid, link_type.clone(), *dst_uuid))).await;
+            inserter
+                .push(indradb::BulkInsertItem::Edge(indradb::EdgeKey::new(
+                    *src_uuid,
+                    link_type.clone(),
+                    *dst_uuid,
+                )))
+                .await;
         }
-        progress.inc();
+        progress.add(dst_uuids.len() as u64);
     }
 
     inserter.flush().await;
@@ -99,8 +114,10 @@ async fn insert_links(article_map: &util::ArticleMap) -> Result<(), proto::Clien
     Ok(())
 }
 
-pub async fn run(article_map: util::ArticleMap) -> Result<(), Box<dyn StdError>> {
-    insert_articles(&article_map).await.map_err(|err| err.compat())?;
-    insert_links(&article_map).await.map_err(|err| err.compat())?;
+pub async fn run(client: proto::Client, article_map: util::ArticleMap) -> Result<(), Box<dyn StdError>> {
+    insert_articles(client.clone(), &article_map)
+        .await
+        .map_err(|err| err.compat())?;
+    insert_links(client, &article_map).await.map_err(|err| err.compat())?;
     Ok(())
 }

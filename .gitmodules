@@ -1,0 +1,3 @@
+[submodule "indradb"]
+	path = indradb
+	url = git@github.com:indradb/indradb.git

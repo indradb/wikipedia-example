@@ -779,13 +779,11 @@ dependencies = [
 [[package]]
 name = "indradb-lib"
 version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3e232b796b9c4791b61056d89562c6f6679ab63e664321661d4a69f40e9255e"
 dependencies = [
  "chrono",
  "failure",
  "lazy_static",
- "rand 0.7.3",
+ "rand 0.8.2",
  "regex",
  "serde_json",
  "uuid",
@@ -794,8 +792,6 @@ dependencies = [
 [[package]]
 name = "indradb-proto"
 version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ac5b20a2bed419ada9aadf66c498f560352dbd6a91df68d4abb9f932c8eca22"
 dependencies = [
  "chrono",
  "failure",

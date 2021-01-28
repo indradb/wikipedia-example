@@ -1,13 +1,14 @@
-use std::error::Error as StdError;
 use std::convert::Infallible;
+use std::error::Error as StdError;
 
 use super::util;
 
-use indradb_proto as proto;
 use indradb::VertexQueryExt;
+use indradb_proto as proto;
 use serde::Deserialize;
-use warp::Filter;
 use serde_json::Value as JsonValue;
+use tera::{Context as TeraContext, Tera};
+use warp::{http, reject, reply, Filter};
 
 const INDEX: &str = r#"
 <form method="get" action="/article">
@@ -43,68 +44,80 @@ const ARTICLE_TEMPLATE: &str = r#"
 #[derive(Debug)]
 enum Error {
     Client { err: proto::ClientError },
-    ArticleNotFound { name: String }
+    ArticleNotFound { name: String },
 }
 
-impl warp::reject::Reject for Error {}
+impl reject::Reject for Error {}
 
 fn map_result<T>(result: Result<T, proto::ClientError>) -> Result<T, warp::Rejection> {
-    result.map_err(|err| warp::reject::custom(Error::Client { err }))
+    result.map_err(|err| reject::custom(Error::Client { err }))
 }
 
-async fn handle_rejection(err: warp::reject::Rejection) -> Result<impl warp::Reply, Infallible> {
+async fn handle_rejection(err: reject::Rejection) -> Result<impl warp::Reply, Infallible> {
     let (status, message) = if let Some(err) = err.find::<Error>() {
         match err {
             Error::Client { err } => {
                 let message = format!("internal error: {}", err);
-                (warp::http::StatusCode::INTERNAL_SERVER_ERROR, message)
-            },
+                (http::StatusCode::INTERNAL_SERVER_ERROR, message)
+            }
             Error::ArticleNotFound { name } => {
                 let message = format!("article not found: {}", name);
-                (warp::http::StatusCode::NOT_FOUND, message)
+                (http::StatusCode::NOT_FOUND, message)
             }
         }
     } else {
-        (warp::http::StatusCode::INTERNAL_SERVER_ERROR, "UNHANDLED_REJECTION".to_string())
+        (
+            http::StatusCode::INTERNAL_SERVER_ERROR,
+            "UNHANDLED_REJECTION".to_string(),
+        )
     };
 
-    Ok(warp::reply::with_status(warp::reply::html(message), status))
+    Ok(reply::with_status(reply::html(message), status))
 }
 
 #[derive(Deserialize)]
 struct ArticleQueryParams {
-    name: String
+    name: String,
 }
 
 async fn handle_index() -> Result<impl warp::Reply, Infallible> {
-    Ok(warp::reply::html(INDEX))
+    Ok(reply::html(INDEX))
 }
 
-// TODO: this could be optimized quite a bit, by moving tera and IndraDB client construction out
-async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_article(
+    mut client: proto::Client,
+    tera: Tera,
+    query: ArticleQueryParams,
+) -> Result<impl warp::Reply, warp::Rejection> {
     let article_id = util::article_uuid(&query.name);
     let vertex_query = indradb::SpecificVertexQuery::single(article_id);
 
-    let mut client = map_result(util::client().await)?;
     let mut trans = map_result(client.transaction().await)?;
 
     let vertices = map_result(trans.get_vertices(vertex_query.clone()).await)?;
-    if vertices.len() == 0 {
-        return Err(warp::reject::custom(Error::ArticleNotFound { name: query.name.clone() }));
+    if vertices.is_empty() {
+        return Err(reject::custom(Error::ArticleNotFound {
+            name: query.name.clone(),
+        }));
     }
 
-    let edge_count = map_result(trans.get_edge_count(article_id, None, indradb::EdgeDirection::Outbound).await)?;
+    let edge_count = map_result(
+        trans
+            .get_edge_count(article_id, None, indradb::EdgeDirection::Outbound)
+            .await,
+    )?;
     let edges = map_result(trans.get_edges(vertex_query.outbound()).await)?;
 
     let name = {
         let q = indradb::VertexPropertyQuery::new(
             indradb::SpecificVertexQuery::new(edges.iter().map(|e| e.key.inbound_id).collect()).into(),
-            "name"
+            "name",
         );
         map_result(trans.get_vertex_properties(q).await)?
     };
 
-    let inbound_edges: Vec<(String, String)> = name.iter()
+    let inbound_edges: Vec<(String, String)> = name
+        .iter()
         .map(|p| {
             if let JsonValue::String(s) = &p.value {
                 (p.id.to_string(), s.clone())
@@ -114,28 +127,37 @@ async fn handle_article(query: ArticleQueryParams) -> Result<impl warp::Reply, w
         })
         .collect();
 
-    let mut context = tera::Context::new();
+    let mut context = TeraContext::new();
     context.insert("article_name", &query.name);
     context.insert("article_id", &article_id.to_string());
     context.insert("edge_count", &edge_count);
     context.insert("inbound_edges", &inbound_edges);
-    let rendered = tera::Tera::one_off(ARTICLE_TEMPLATE, &context, true).unwrap();
-    Ok(warp::reply::html(rendered))
+    let rendered = tera.render("article.html", &context).unwrap();
+    Ok(reply::html(rendered))
 }
 
-pub async fn run(port: u16) -> Result<(), Box<dyn StdError>> {
-    let index_route = warp::path::end()
-        .and(warp::get())
-        .and_then(handle_index);
+fn with_client(client: proto::Client) -> impl Filter<Extract = (proto::Client,), Error = Infallible> + Clone {
+    warp::any().map(move || client.clone())
+}
+
+fn with_templating(tera: Tera) -> impl Filter<Extract = (Tera,), Error = Infallible> + Clone {
+    warp::any().map(move || tera.clone())
+}
+
+pub async fn run(client: proto::Client, port: u16) -> Result<(), Box<dyn StdError>> {
+    let mut tera = Tera::default();
+    tera.add_raw_templates(vec![("article.html", ARTICLE_TEMPLATE)])?;
+
+    let index_route = warp::path::end().and(warp::get()).and_then(handle_index);
 
     let article_route = warp::path("article")
         .and(warp::get())
+        .and(with_client(client.clone()))
+        .and(with_templating(tera.clone()))
         .and(warp::query::<ArticleQueryParams>())
         .and_then(handle_article);
 
-    let routes = index_route
-        .or(article_route)
-        .recover(handle_rejection);
+    let routes = index_route.or(article_route).recover(handle_rejection);
 
     warp::serve(routes).run(([127, 0, 0, 1], port)).await;
 
