@@ -1,6 +1,7 @@
 use std::error::Error as StdError;
+use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{stdout, BufReader, Write};
+use std::io::{stdout, BufReader, BufWriter, Write};
 use std::str;
 
 use super::util::ArticleMap;
@@ -119,16 +120,18 @@ fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
     Ok(article_map)
 }
 
-pub fn write_dump(archive_path: &str, dump_path: &str) -> Result<(), Box<dyn StdError>> {
+pub fn write_dump(archive_path: &OsStr, dump_path: &OsStr) -> Result<(), Box<dyn StdError>> {
     let article_map = read_archive(File::open(archive_path)?)?;
-    bincode::serialize_into(File::create(dump_path)?, &article_map)?;
+    let buf = BufWriter::new(File::create(dump_path)?);
+    bincode::serialize_into(buf, &article_map)?;
     Ok(())
 }
 
-pub fn read_dump(dump_path: &str) -> Result<ArticleMap, Box<dyn StdError>> {
+pub fn read_dump(dump_path: &OsStr) -> Result<ArticleMap, Box<dyn StdError>> {
     print!("reading dump...");
     stdout().flush()?;
-    let article_map = bincode::deserialize_from(File::open(dump_path)?)?;
+    let buf = BufReader::new(File::open(dump_path)?);
+    let article_map = bincode::deserialize_from(buf)?;
     println!("\rreading dump: done");
     Ok(article_map)
 }
