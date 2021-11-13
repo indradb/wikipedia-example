@@ -1,12 +1,9 @@
 use std::convert::Infallible;
 use std::error::Error as StdError;
 
-use super::util;
-
 use indradb::VertexQueryExt;
 use indradb_proto as proto;
 use serde::Deserialize;
-use serde_json::Value as JsonValue;
 use tera::{Context as TeraContext, Tera};
 use warp::{http, reject, reply, Filter};
 
@@ -89,8 +86,9 @@ async fn handle_article(
     tera: Tera,
     query: ArticleQueryParams,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let article_id = util::article_uuid(&query.name);
-    let vertex_query = indradb::SpecificVertexQuery::single(article_id);
+    let name_identifier = indradb::Type::new("name").unwrap();
+    let property_value = indradb::JsonValue::new(serde_json::Value::String(query.name.clone()));
+    let vertex_query = indradb::PropertyValueVertexQuery::new(name_identifier.clone(), property_value);
 
     let mut trans = map_result(client.transaction().await)?;
 
@@ -100,6 +98,8 @@ async fn handle_article(
             name: query.name.clone(),
         }));
     }
+    assert_eq!(vertices.len(), 1);
+    let article_id = vertices[0].id;
 
     let edge_count = map_result(
         trans
@@ -111,7 +111,7 @@ async fn handle_article(
     let name = {
         let q = indradb::VertexPropertyQuery::new(
             indradb::SpecificVertexQuery::new(edges.iter().map(|e| e.key.inbound_id).collect()).into(),
-            "name",
+            name_identifier,
         );
         map_result(trans.get_vertex_properties(q).await)?
     };
@@ -119,7 +119,7 @@ async fn handle_article(
     let inbound_edges: Vec<(String, String)> = name
         .iter()
         .map(|p| {
-            if let JsonValue::String(s) = &p.value {
+            if let serde_json::Value::String(s) = &p.value.0 {
                 (p.id.to_string(), s.clone())
             } else {
                 unreachable!();
