@@ -13,7 +13,7 @@ data/enwiki-latest-pages-articles.xml.bz2:
 
 data/wikipedia.rdb: data/enwiki-latest-pages-articles.xml.bz2 indradb/target/release/indradb-server
 	time cargo run --release -- index \
-		--dump-path data/archive_dump.bincode \
+		--archive-path data/enwiki-latest-pages-articles.xml.bz2 \
 		--database-path data/wikipedia.rdb
 
 explore: data/wikipedia.rdb indradb/target/release/indradb-server

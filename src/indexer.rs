@@ -281,8 +281,8 @@ async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result
 }
 
 pub async fn run(mut client: proto::Client, archive_path: &OsStr) -> Result<(), Box<dyn StdError>> {
-    let article_map = read_archive(File::open(archive_path)?)?;
     client.index_property(indradb::Type::new("name")?).await?;
+    let article_map = read_archive(File::open(archive_path)?)?;
     insert_articles(client.clone(), &article_map).await?;
     insert_links(client, &article_map).await?;
     Ok(())
