@@ -229,7 +229,7 @@ async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Res
     progress.message("indexing articles: ");
 
     let mut inserter = BulkInserter::new(client);
-    let article_type = indradb::Type::new("article").unwrap();
+    let article_type = indradb::Identifier::new("article").unwrap();
 
     for (article_name, article_uuid) in &article_map.uuids {
         inserter
@@ -241,7 +241,7 @@ async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Res
         inserter
             .push(indradb::BulkInsertItem::VertexProperty(
                 *article_uuid,
-                indradb::Type::new("name")?,
+                indradb::Identifier::new("name")?,
                 indradb::JsonValue::new(serde_json::Value::String(article_name.clone())),
             ))
             .await;
@@ -259,7 +259,7 @@ async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result
     progress.message("indexing links: ");
 
     let mut inserter = BulkInserter::new(client);
-    let link_type = indradb::Type::new("link").unwrap();
+    let link_type = indradb::Identifier::new("link").unwrap();
 
     for (src_uuid, dst_uuids) in &article_map.links {
         for dst_uuid in dst_uuids {
@@ -281,7 +281,7 @@ async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result
 }
 
 pub async fn run(mut client: proto::Client, archive_path: &OsStr) -> Result<(), Box<dyn StdError>> {
-    client.index_property(indradb::Type::new("name")?).await?;
+    client.index_property(indradb::Identifier::new("name")?).await?;
     let article_map = read_archive(File::open(archive_path)?)?;
     insert_articles(client.clone(), &article_map).await?;
     insert_links(client, &article_map).await?;
