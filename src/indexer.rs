@@ -7,15 +7,12 @@ use std::mem::replace;
 use std::str;
 
 use bzip2::bufread::BzDecoder;
-use chrono::offset::Utc;
 use indradb_proto as proto;
 use pbr::ProgressBar;
 use quick_xml::{events::Event, Reader};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
-use uuid::v1::{Context, Timestamp};
-use uuid::Uuid;
 
 const REQUEST_BUFFER_SIZE: usize = 10_000;
 
@@ -23,47 +20,42 @@ const ARTICLE_NAME_PREFIX_BLACKLIST: [&str; 7] = ["Wikipedia:", "WP:", ":", "Fil
 
 const REDIRECT_PREFIX: &str = "#REDIRECT [[";
 
-const NODE_ID: [u8; 6] = [0, 0, 0, 0, 0, 0];
-
-lazy_static! {
-    static ref CONTEXT: Context = Context::new(0);
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct ArticleMap {
-    pub uuids: BTreeMap<String, Uuid>,
-    pub links: BTreeMap<Uuid, BTreeSet<Uuid>>,
+    pub articles: BTreeMap<String, u64>,
+    pub links: BTreeMap<u64, BTreeSet<u64>>,
+    next_article_id: u64
 }
 
 impl Default for ArticleMap {
     fn default() -> Self {
         Self {
-            uuids: BTreeMap::default(),
+            articles: BTreeMap::default(),
             links: BTreeMap::default(),
+            next_article_id: 1,
         }
     }
 }
 
 impl ArticleMap {
-    pub fn insert_article(&mut self, name: &str) -> Uuid {
-        if let Some(&uuid) = self.uuids.get(name) {
-            return uuid;
+    pub fn insert_article(&mut self, name: &str) -> u64 {
+        if let Some(&id) = self.articles.get(name) {
+            return id;
         }
 
-        let now = Utc::now();
-        let ts = Timestamp::from_unix(&*CONTEXT, now.timestamp() as u64, now.timestamp_subsec_nanos());
-        let uuid = Uuid::new_v1(ts, &NODE_ID).expect("Expected to be able to generate a UUID");
-        self.uuids.insert(name.to_string(), uuid);
-        uuid
+        let id = self.next_article_id;
+        self.next_article_id += 1;
+        self.articles.insert(name.to_string(), id);
+        id
     }
 
-    pub fn insert_link(&mut self, src_uuid: Uuid, dst_uuid: Uuid) {
+    pub fn insert_link(&mut self, src_uuid: u64, dst_uuid: u64) {
         let container = self.links.entry(src_uuid).or_insert_with(BTreeSet::default);
         container.insert(dst_uuid);
     }
 
     pub fn article_len(&self) -> u64 {
-        self.uuids.len() as u64
+        self.articles.len() as u64
     }
 
     pub fn link_len(&self) -> u64 {
@@ -166,8 +158,8 @@ fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
 
         buf.clear();
 
-        if article_map.uuids.len() - last_article_map_len >= 1000 {
-            last_article_map_len = article_map.uuids.len();
+        if article_map.articles.len() - last_article_map_len >= 1000 {
+            last_article_map_len = article_map.articles.len();
             print!("\rreading archive: {}", last_article_map_len);
             stdout().flush()?;
         }
@@ -229,9 +221,9 @@ async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Res
     progress.message("indexing articles: ");
 
     let mut inserter = BulkInserter::new(client);
-    let article_type = indradb::Type::new("article").unwrap();
+    let article_type = indradb::Identifier::new("article").unwrap();
 
-    for (article_name, article_uuid) in &article_map.uuids {
+    for (article_name, article_uuid) in &article_map.articles {
         inserter
             .push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(
                 *article_uuid,
@@ -241,7 +233,7 @@ async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Res
         inserter
             .push(indradb::BulkInsertItem::VertexProperty(
                 *article_uuid,
-                indradb::Type::new("name")?,
+                indradb::Identifier::new("name")?,
                 indradb::JsonValue::new(serde_json::Value::String(article_name.clone())),
             ))
             .await;
@@ -259,7 +251,7 @@ async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result
     progress.message("indexing links: ");
 
     let mut inserter = BulkInserter::new(client);
-    let link_type = indradb::Type::new("link").unwrap();
+    let link_type = indradb::Identifier::new("link").unwrap();
 
     for (src_uuid, dst_uuids) in &article_map.links {
         for dst_uuid in dst_uuids {
@@ -281,7 +273,7 @@ async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result
 }
 
 pub async fn run(mut client: proto::Client, archive_path: &OsStr) -> Result<(), Box<dyn StdError>> {
-    client.index_property(indradb::Type::new("name")?).await?;
+    client.index_property(indradb::Identifier::new("name")?).await?;
     let article_map = read_archive(File::open(archive_path)?)?;
     insert_articles(client.clone(), &article_map).await?;
     insert_links(client, &article_map).await?;

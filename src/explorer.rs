@@ -86,7 +86,7 @@ async fn handle_article(
     tera: Tera,
     query: ArticleQueryParams,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let name_identifier = indradb::Type::new("name").unwrap();
+    let name_identifier = indradb::Identifier::new("name").unwrap();
     let property_value = indradb::JsonValue::new(serde_json::Value::String(query.name.clone()));
     let vertex_query = indradb::PropertyValueVertexQuery::new(name_identifier.clone(), property_value);
 

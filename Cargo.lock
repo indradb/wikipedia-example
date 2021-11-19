@@ -698,11 +698,9 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "bzip2",
- "chrono",
  "clap",
  "indradb-lib",
  "indradb-proto",
- "lazy_static",
  "libc",
  "pbr",
  "quick-xml",
@@ -712,7 +710,6 @@ dependencies = [
  "tera",
  "tokio",
  "tonic",
- "uuid",
  "warp",
 ]
 
