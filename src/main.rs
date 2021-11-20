@@ -5,8 +5,6 @@ extern crate lazy_static;
 
 mod explorer;
 mod indexer;
-mod parser;
-mod util;
 
 use std::convert::TryInto;
 use std::error::Error as StdError;
@@ -15,7 +13,6 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 
 use clap::{App, Arg, SubCommand};
-use failure::Fail;
 use indradb_proto as proto;
 use tonic::transport::Endpoint;
 
@@ -61,13 +58,6 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
         .required(true)
         .takes_value(true);
 
-    let archive_dump_arg = Arg::with_name("DUMP_PATH")
-        .help("path to the archive dump, an intermediate representation for faster re-indexing")
-        .long("dump-path")
-        .value_name("DUMP_PATH")
-        .required(true)
-        .takes_value(true);
-
     let datastore_arg = Arg::with_name("DATABASE_PATH")
         .help("path for storing the IndraDB results")
         .long("database-path")
@@ -84,33 +74,23 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
 
     let matches = App::new("IndraDB wikipedia example")
         .about("demonstrates IndraDB with the wikipedia dataset")
-        .subcommand(SubCommand::with_name("parse").arg(&archive_arg).arg(&archive_dump_arg))
-        .subcommand(
-            SubCommand::with_name("index")
-                .arg(&archive_dump_arg)
-                .arg(&datastore_arg),
-        )
+        .subcommand(SubCommand::with_name("index").arg(&archive_arg).arg(&datastore_arg))
         .subcommand(SubCommand::with_name("explore").arg(&datastore_arg).arg(&port_arg))
         .get_matches();
 
-    if let Some(matches) = matches.subcommand_matches("parse") {
+    if let Some(matches) = matches.subcommand_matches("index") {
         let archive_path = matches.value_of_os("ARCHIVE_PATH").unwrap();
-        let archive_dump_path = matches.value_of_os("DUMP_PATH").unwrap();
-        parser::write_dump(archive_path, archive_dump_path)
-    } else if let Some(matches) = matches.subcommand_matches("index") {
-        let archive_dump_path = matches.value_of_os("DUMP_PATH").unwrap();
         let database_path = matches.value_of_os("DATABASE_PATH").unwrap();
         let server = Server::start(database_path)?;
         let endpoint: Endpoint = server.address.clone().try_into()?;
-        let client = proto::Client::new(endpoint).await.map_err(|err| err.compat())?;
-        let article_map = parser::read_dump(archive_dump_path)?;
-        indexer::run(client, article_map).await
+        let client = proto::Client::new(endpoint).await?;
+        indexer::run(client, archive_path).await
     } else if let Some(matches) = matches.subcommand_matches("explore") {
         let database_path = matches.value_of_os("DATABASE_PATH").unwrap();
         let port = value_t!(matches.value_of("PORT"), u16).unwrap_or_else(|err| err.exit());
         let server = Server::start(database_path)?;
         let endpoint: Endpoint = server.address.clone().try_into()?;
-        let client = proto::Client::new(endpoint).await.map_err(|err| err.compat())?;
+        let client = proto::Client::new(endpoint).await?;
         explorer::run(client, port).await
     } else {
         panic!("no subcommand specified");
