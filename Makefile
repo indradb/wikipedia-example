@@ -13,7 +13,7 @@ rebuild:
 	cd indradb/server && cargo build --release
 
 data/wikipedia.rdb: data/enwiki-latest-pages-articles.xml.bz2 rebuild
-	time target/release/indradb-wikipedia index \
+	target/release/indradb-wikipedia index \
 		--archive-path data/enwiki-latest-pages-articles.xml.bz2 \
 		--database-path data/wikipedia.rdb
 
