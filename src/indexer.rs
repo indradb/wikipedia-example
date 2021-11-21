@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{stdout, BufReader, Write};
 use std::mem::replace;
 use std::str;
+use std::time::Instant;
 
 use bzip2::bufread::BzDecoder;
 use indradb_proto as proto;
@@ -273,9 +274,11 @@ async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result
 }
 
 pub async fn run(mut client: proto::Client, archive_path: &OsStr) -> Result<(), Box<dyn StdError>> {
+    let start_time = Instant::now();
     client.index_property(indradb::Identifier::new("name")?).await?;
     let article_map = read_archive(File::open(archive_path)?)?;
     insert_articles(client.clone(), &article_map).await?;
     insert_links(client, &article_map).await?;
+    println!("finished in {} seconds", start_time.elapsed().as_secs());
     Ok(())
 }
