@@ -87,12 +87,10 @@ async fn handle_article(
     query: ArticleQueryParams,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let name_identifier = indradb::Identifier::new("name").unwrap();
-    let property_value = indradb::JsonValue::new(serde_json::Value::String(query.name.clone()));
+    let property_value = serde_json::Value::String(query.name.clone());
     let vertex_query = indradb::PropertyValueVertexQuery::new(name_identifier.clone(), property_value);
 
-    let mut trans = map_result(client.transaction().await)?;
-
-    let vertices = map_result(trans.get_vertices(vertex_query.clone()).await)?;
+    let vertices = map_result(client.get_vertices(vertex_query.clone().into()).await)?;
     if vertices.is_empty() {
         return Err(reject::custom(Error::ArticleNotFound {
             name: query.name.clone(),
@@ -102,24 +100,24 @@ async fn handle_article(
     let article_id = vertices[0].id;
 
     let edge_count = map_result(
-        trans
+        client
             .get_edge_count(article_id, None, indradb::EdgeDirection::Outbound)
             .await,
     )?;
-    let edges = map_result(trans.get_edges(vertex_query.outbound()).await)?;
+    let edges = map_result(client.get_edges(vertex_query.outbound().into()).await)?;
 
     let name = {
         let q = indradb::VertexPropertyQuery::new(
             indradb::SpecificVertexQuery::new(edges.iter().map(|e| e.key.inbound_id).collect()).into(),
             name_identifier,
         );
-        map_result(trans.get_vertex_properties(q).await)?
+        map_result(client.get_vertex_properties(q).await)?
     };
 
     let inbound_edges: Vec<(String, String)> = name
         .iter()
         .map(|p| {
-            if let serde_json::Value::String(s) = &p.value.0 {
+            if let serde_json::Value::String(s) = &p.value {
                 (p.id.to_string(), s.clone())
             } else {
                 unreachable!();

@@ -194,7 +194,7 @@ impl BulkInserter {
             let mut client = client.clone();
             workers.push(tokio::spawn(async move {
                 while let Ok(buf) = rx.recv().await {
-                    client.bulk_insert(buf.into_iter()).await.unwrap();
+                    client.bulk_insert(buf).await.unwrap();
                 }
             }));
         }
@@ -243,7 +243,7 @@ async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Res
             .push(indradb::BulkInsertItem::VertexProperty(
                 *article_uuid,
                 indradb::Identifier::new("name")?,
-                indradb::JsonValue::new(serde_json::Value::String(article_name.clone())),
+                serde_json::Value::String(article_name.clone()),
             ))
             .await;
         progress.inc();
