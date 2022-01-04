@@ -125,7 +125,11 @@ async fn handle_article(
     let properties = {
         let properties = map_result(client.get_all_vertex_properties(article_query.clone().into()).await)?;
         assert_eq!(properties.len(), 1);
-        properties[0].props.iter().map(|p| (p.name.0.to_string(), p.value.to_string())).collect::<Vec<(String, String)>>()
+        properties[0]
+            .props
+            .iter()
+            .map(|p| (p.name.0.to_string(), p.value.to_string()))
+            .collect::<Vec<(String, String)>>()
     };
 
     let linked_articles = {
