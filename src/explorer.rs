@@ -20,6 +20,9 @@ const ARTICLE_TEMPLATE: &str = r#"
 <ul>
     <li>id: {{ article_id }}</li>
     <li>edge count: {{ edge_count }}</li>
+    {% if centrality %}
+        <li>centrality: {{ centrality }}</li>
+    {% endif %}
 </ul>
 {% if inbound_edges %}
     <h3>Edges</h3>
@@ -87,8 +90,12 @@ async fn handle_article(
     query: ArticleQueryParams,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let name_identifier = indradb::Identifier::new("name").unwrap();
-    let property_value = serde_json::Value::String(query.name.clone());
-    let vertex_query = indradb::PropertyValueVertexQuery::new(name_identifier.clone(), property_value);
+    let centrality_identifier = indradb::Identifier::new("centrality").unwrap();
+
+    let vertex_query = {
+        let property_value = serde_json::Value::String(query.name.clone());
+        indradb::PropertyValueVertexQuery::new(name_identifier.clone(), property_value)
+    };
 
     let vertices = map_result(client.get_vertices(vertex_query.clone().into()).await)?;
     if vertices.is_empty() {
@@ -104,6 +111,10 @@ async fn handle_article(
             .get_edge_count(article_id, None, indradb::EdgeDirection::Outbound)
             .await,
     )?;
+
+    let centralities = map_result(client.get_vertex_properties(indradb::SpecificVertexQuery::single(article_id).property(centrality_identifier)).await)?;
+    let centrality = centralities.get(0).map(|p| p.value.as_f64().unwrap());
+
     let edges = map_result(client.get_edges(vertex_query.outbound().into()).await)?;
 
     let name = {
@@ -129,6 +140,7 @@ async fn handle_article(
     context.insert("article_name", &query.name);
     context.insert("article_id", &article_id.to_string());
     context.insert("edge_count", &edge_count);
+    context.insert("centrality", &centrality);
     context.insert("inbound_edges", &inbound_edges);
     let rendered = tera.render("article.html", &context).unwrap();
     Ok(reply::html(rendered))
