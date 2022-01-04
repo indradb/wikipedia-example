@@ -96,12 +96,14 @@ pub async fn main() -> Result<(), Box<dyn StdError>> {
 
     let matches = App::new("IndraDB wikipedia example")
         .about("demonstrates IndraDB with the wikipedia dataset")
-        .arg(Arg::with_name("DATABASE_PATH")
-            .help("path for storing the IndraDB results")
-            .long("database-path")
-            .value_name("DATABASE_PATH")
-            .required(true)
-            .takes_value(true))
+        .arg(
+            Arg::with_name("DATABASE_PATH")
+                .help("path for storing the IndraDB results")
+                .long("database-path")
+                .value_name("DATABASE_PATH")
+                .required(true)
+                .takes_value(true),
+        )
         .subcommand(SubCommand::with_name("index").arg(&archive_arg))
         .subcommand(SubCommand::with_name("analyze"))
         .subcommand(SubCommand::with_name("explore").arg(&port_arg))

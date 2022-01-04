@@ -139,7 +139,10 @@ fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
                 let elapsed = progress_start.elapsed();
                 if elapsed.as_secs() >= 1 {
                     let read_speed_str = (total_read_count - last_total_read_count).to_string();
-                    print!("\rreading archive: {} articles ({}/s)", total_read_count, read_speed_str);
+                    print!(
+                        "\rreading archive: {} articles ({}/s)",
+                        total_read_count, read_speed_str
+                    );
                     for _ in 0..(10i16 - read_speed_str.len() as i16) {
                         print!(" ");
                     }

@@ -112,7 +112,11 @@ async fn handle_article(
             .await,
     )?;
 
-    let centralities = map_result(client.get_vertex_properties(indradb::SpecificVertexQuery::single(article_id).property(centrality_identifier)).await)?;
+    let centralities = map_result(
+        client
+            .get_vertex_properties(indradb::SpecificVertexQuery::single(article_id).property(centrality_identifier))
+            .await,
+    )?;
     let centrality = centralities.get(0).map(|p| p.value.as_f64().unwrap());
 
     let edges = map_result(client.get_edges(vertex_query.outbound().into()).await)?;
