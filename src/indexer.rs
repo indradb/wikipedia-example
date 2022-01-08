@@ -98,11 +98,14 @@ fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
     let title_tag = "title".as_bytes();
     let text_tag = "text".as_bytes();
     let revision_tag = "revision".as_bytes();
-    let mut last_article_map_len = 0;
+
+    let mut progress_start = Instant::now();
+    let mut last_total_read_count = 0u32;
+    let mut total_read_count = 0u32;
 
     let wiki_link_re = Regex::new(r"\[\[([^\[\]|]+)(|[\]]+)?\]\]").unwrap();
 
-    print!("reading archive: 0");
+    print!("reading archive");
     stdout().flush()?;
 
     loop {
@@ -129,6 +132,23 @@ fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
                     let dst = &cap[1];
                     let dst_uuid = article_map.insert_article(dst);
                     article_map.insert_link(src_uuid, dst_uuid);
+                }
+
+                total_read_count += 1;
+
+                let elapsed = progress_start.elapsed();
+                if elapsed.as_secs() >= 1 {
+                    let read_speed_str = (total_read_count - last_total_read_count).to_string();
+                    print!(
+                        "\rreading archive: {} articles ({}/s)",
+                        total_read_count, read_speed_str
+                    );
+                    for _ in 0..(10i16 - read_speed_str.len() as i16) {
+                        print!(" ");
+                    }
+                    stdout().flush()?;
+                    progress_start = Instant::now();
+                    last_total_read_count = total_read_count;
                 }
 
                 ArchiveReadState::Ignore
@@ -166,12 +186,6 @@ fn read_archive(f: File) -> Result<ArticleMap, Box<dyn StdError>> {
         };
 
         buf.clear();
-
-        if article_map.uuids.len() - last_article_map_len >= 1000 {
-            last_article_map_len = article_map.uuids.len();
-            print!("\rreading archive: {}", last_article_map_len);
-            stdout().flush()?;
-        }
     }
 
     println!();
@@ -194,7 +208,7 @@ impl BulkInserter {
             let mut client = client.clone();
             workers.push(tokio::spawn(async move {
                 while let Ok(buf) = rx.recv().await {
-                    client.bulk_insert(buf.into_iter()).await.unwrap();
+                    client.bulk_insert(buf).await.unwrap();
                 }
             }));
         }
@@ -243,7 +257,7 @@ async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Res
             .push(indradb::BulkInsertItem::VertexProperty(
                 *article_uuid,
                 indradb::Identifier::new("name")?,
-                indradb::JsonValue::new(serde_json::Value::String(article_name.clone())),
+                serde_json::Value::String(article_name.clone()),
             ))
             .await;
         progress.inc();
