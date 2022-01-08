@@ -30,19 +30,10 @@ lazy_static! {
     static ref CONTEXT: Context = Context::new(0);
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct ArticleMap {
     pub uuids: HashMap<String, Uuid>,
     pub links: HashMap<Uuid, HashSet<Uuid>>,
-}
-
-impl Default for ArticleMap {
-    fn default() -> Self {
-        Self {
-            uuids: HashMap::default(),
-            links: HashMap::default(),
-        }
-    }
 }
 
 impl ArticleMap {
