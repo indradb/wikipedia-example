@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{HashMap, HashSet};
 use std::error::Error as StdError;
 use std::ffi::OsStr;
 use std::fs::File;
@@ -32,15 +32,15 @@ lazy_static! {
 
 #[derive(Serialize, Deserialize)]
 pub struct ArticleMap {
-    pub uuids: BTreeMap<String, Uuid>,
-    pub links: BTreeMap<Uuid, BTreeSet<Uuid>>,
+    pub uuids: HashMap<String, Uuid>,
+    pub links: HashMap<Uuid, HashSet<Uuid>>,
 }
 
 impl Default for ArticleMap {
     fn default() -> Self {
         Self {
-            uuids: BTreeMap::default(),
-            links: BTreeMap::default(),
+            uuids: HashMap::default(),
+            links: HashMap::default(),
         }
     }
 }
@@ -59,7 +59,7 @@ impl ArticleMap {
     }
 
     pub fn insert_link(&mut self, src_uuid: Uuid, dst_uuid: Uuid) {
-        let container = self.links.entry(src_uuid).or_insert_with(BTreeSet::default);
+        let container = self.links.entry(src_uuid).or_insert_with(HashSet::default);
         container.insert(dst_uuid);
     }
 
