@@ -663,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "indradb-lib"
-version = "2.2.0"
+version = "3.0.0"
 dependencies = [
  "bincode",
  "byteorder",
@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "indradb-proto"
-version = "2.2.0"
+version = "3.0.0"
 dependencies = [
  "chrono",
  "indradb-lib",
