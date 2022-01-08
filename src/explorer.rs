@@ -16,22 +16,36 @@ const INDEX: &str = r#"
 
 const ARTICLE_TEMPLATE: &str = r#"
 <h1>{{ article_name }}</h1>
-<h3>Properties</h3>
 <ul>
     <li>id: {{ article_id }}</li>
     <li>edge count: {{ edge_count }}</li>
 </ul>
-{% if inbound_edges %}
-    <h3>Edges</h3>
+
+<h3>Properties</h3>
+<table>
+    <tr>
+        <th>name</th>
+        <th>value</th>
+    </tr>
+    {% for prop in properties %}
+        <tr>
+            <td>{{ prop.0 }}</td>
+            <td>{{ prop.1 }}</td>
+        </tr>
+    {% endfor %}
+</table>
+
+{% if linked_articles %}
+    <h3>Linked articles</h3>
     <table>
         <tr>
             <th>id</th>
             <th>name</th>
         </tr>
-        {% for edge in inbound_edges %}
+        {% for article in linked_articles %}
             <tr>
-                <td>{{ edge.0 }}</td>
-                <td><a href="/article?name={{ edge.1 | urlencode }}">{{ edge.1 }}</a></td>
+                <td>{{ article.0 }}</td>
+                <td><a href="/article?name={{ article.1 | urlencode }}">{{ article.1 }}</a></td>
             </tr>
         {% endfor %}
     </table>
@@ -87,51 +101,62 @@ async fn handle_article(
     query: ArticleQueryParams,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let name_identifier = indradb::Identifier::new("name").unwrap();
-    let property_value = indradb::JsonValue::new(serde_json::Value::String(query.name.clone()));
-    let vertex_query = indradb::PropertyValueVertexQuery::new(name_identifier.clone(), property_value);
 
-    let mut trans = map_result(client.transaction().await)?;
-
-    let vertices = map_result(trans.get_vertices(vertex_query.clone()).await)?;
-    if vertices.is_empty() {
-        return Err(reject::custom(Error::ArticleNotFound {
-            name: query.name.clone(),
-        }));
-    }
-    assert_eq!(vertices.len(), 1);
-    let article_id = vertices[0].id;
+    let article_id = {
+        let property_value = serde_json::Value::String(query.name.clone());
+        let q = indradb::PropertyValueVertexQuery::new(name_identifier.clone(), property_value);
+        let vertices = map_result(client.get_vertices(q.into()).await)?;
+        if vertices.is_empty() {
+            return Err(reject::custom(Error::ArticleNotFound {
+                name: query.name.clone(),
+            }));
+        }
+        assert_eq!(vertices.len(), 1);
+        vertices[0].id
+    };
+    let article_query = indradb::SpecificVertexQuery::single(article_id);
 
     let edge_count = map_result(
-        trans
+        client
             .get_edge_count(article_id, None, indradb::EdgeDirection::Outbound)
             .await,
     )?;
-    let edges = map_result(trans.get_edges(vertex_query.outbound()).await)?;
 
-    let name = {
+    let properties = {
+        let properties = map_result(client.get_all_vertex_properties(article_query.clone().into()).await)?;
+        assert_eq!(properties.len(), 1);
+        properties[0]
+            .props
+            .iter()
+            .map(|p| (p.name.to_string(), p.value.to_string()))
+            .collect::<Vec<(String, String)>>()
+    };
+
+    let linked_articles = {
+        let edges = map_result(client.get_edges(article_query.outbound().into()).await)?;
+
         let q = indradb::VertexPropertyQuery::new(
             indradb::SpecificVertexQuery::new(edges.iter().map(|e| e.key.inbound_id).collect()).into(),
             name_identifier,
         );
-        map_result(trans.get_vertex_properties(q).await)?
+        map_result(client.get_vertex_properties(q).await)?
+            .iter()
+            .map(|p| {
+                if let serde_json::Value::String(s) = &p.value {
+                    (p.id.to_string(), s.clone())
+                } else {
+                    unreachable!();
+                }
+            })
+            .collect::<Vec<(String, String)>>()
     };
-
-    let inbound_edges: Vec<(String, String)> = name
-        .iter()
-        .map(|p| {
-            if let serde_json::Value::String(s) = &p.value.0 {
-                (p.id.to_string(), s.clone())
-            } else {
-                unreachable!();
-            }
-        })
-        .collect();
 
     let mut context = TeraContext::new();
     context.insert("article_name", &query.name);
     context.insert("article_id", &article_id.to_string());
     context.insert("edge_count", &edge_count);
-    context.insert("inbound_edges", &inbound_edges);
+    context.insert("properties", &properties);
+    context.insert("linked_articles", &linked_articles);
     let rendered = tera.render("article.html", &context).unwrap();
     Ok(reply::html(rendered))
 }
