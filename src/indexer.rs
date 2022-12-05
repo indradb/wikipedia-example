@@ -44,7 +44,7 @@ impl ArticleMap {
 
         let now = Utc::now();
         let ts = Timestamp::from_unix(&*CONTEXT, now.timestamp() as u64, now.timestamp_subsec_nanos());
-        let uuid = Uuid::new_v1(ts, &NODE_ID).expect("Expected to be able to generate a UUID");
+        let uuid = Uuid::new_v1(ts, &NODE_ID);
         self.uuids.insert(name.to_string(), uuid);
         uuid
     }

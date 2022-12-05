@@ -1,7 +1,6 @@
 .PHONY: explore init rebuild
 
 init:
-	git submodule update --init --recursive
 	make data/wikipedia.rdb
 
 data/enwiki-latest-pages-articles.xml.bz2:
