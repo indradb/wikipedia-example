@@ -8,14 +8,12 @@ use std::str;
 use std::time::Instant;
 
 use bzip2::bufread::BzDecoder;
-use chrono::offset::Utc;
 use indradb_proto as proto;
 use pbr::ProgressBar;
 use quick_xml::{events::Event, Reader};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
-use uuid::v1::{Context, Timestamp};
 use uuid::Uuid;
 
 const REQUEST_BUFFER_SIZE: usize = 10_000;
@@ -23,12 +21,6 @@ const REQUEST_BUFFER_SIZE: usize = 10_000;
 const ARTICLE_NAME_PREFIX_BLACKLIST: [&str; 7] = ["Wikipedia:", "WP:", ":", "File:", "Image:", "Template:", "User:"];
 
 const REDIRECT_PREFIX: &str = "#REDIRECT [[";
-
-const NODE_ID: [u8; 6] = [0, 0, 0, 0, 0, 0];
-
-lazy_static! {
-    static ref CONTEXT: Context = Context::new(0);
-}
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct ArticleMap {
@@ -41,10 +33,7 @@ impl ArticleMap {
         if let Some(&uuid) = self.uuids.get(name) {
             return uuid;
         }
-
-        let now = Utc::now();
-        let ts = Timestamp::from_unix(&*CONTEXT, now.timestamp() as u64, now.timestamp_subsec_nanos());
-        let uuid = Uuid::new_v1(ts, &NODE_ID).expect("Expected to be able to generate a UUID");
+        let uuid = indradb::util::generate_uuid_v1();
         self.uuids.insert(name.to_string(), uuid);
         uuid
     }
@@ -59,7 +48,7 @@ impl ArticleMap {
     }
 
     pub fn link_len(&self) -> u64 {
-        self.links.iter().map(|(_, v)| v.len()).sum::<usize>() as u64
+        self.links.values().map(|v| v.len()).sum::<usize>() as u64
     }
 }
 
@@ -241,14 +230,14 @@ async fn insert_articles(client: proto::Client, article_map: &ArticleMap) -> Res
         inserter
             .push(indradb::BulkInsertItem::Vertex(indradb::Vertex::with_id(
                 *article_uuid,
-                article_type.clone(),
+                article_type,
             )))
             .await;
         inserter
             .push(indradb::BulkInsertItem::VertexProperty(
                 *article_uuid,
                 indradb::Identifier::new("name")?,
-                serde_json::Value::String(article_name.clone()),
+                indradb::Json::new(serde_json::Value::String(article_name.clone())),
             ))
             .await;
         progress.inc();
@@ -270,10 +259,8 @@ async fn insert_links(client: proto::Client, article_map: &ArticleMap) -> Result
     for (src_uuid, dst_uuids) in &article_map.links {
         for dst_uuid in dst_uuids {
             inserter
-                .push(indradb::BulkInsertItem::Edge(indradb::EdgeKey::new(
-                    *src_uuid,
-                    link_type.clone(),
-                    *dst_uuid,
+                .push(indradb::BulkInsertItem::Edge(indradb::Edge::new(
+                    *src_uuid, link_type, *dst_uuid,
                 )))
                 .await;
         }

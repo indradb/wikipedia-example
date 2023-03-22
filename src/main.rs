@@ -1,7 +1,5 @@
 #[macro_use]
 extern crate clap;
-#[macro_use]
-extern crate lazy_static;
 
 mod explorer;
 mod indexer;
@@ -21,7 +19,7 @@ pub struct Server {
 impl Server {
     pub fn start(database_path: &OsStr) -> Result<Self, Box<dyn StdError>> {
         let child = Command::new("indradb/target/release/indradb-server")
-            .args(&[OsStr::new("rocksdb"), database_path])
+            .args([OsStr::new("rocksdb"), database_path])
             .env("RUST_BACKTRACE", "1")
             .spawn()?;
         Ok(Server { child })
