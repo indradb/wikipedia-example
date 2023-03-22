@@ -22,8 +22,8 @@ clap = "2"
 bzip2 = "0.4.3"
 quick-xml = "0.22.0"
 regex = "1"
-serde = { version = "^1.0.57", features = ["derive"] }
-tokio = { version = "1.13.1", features = ["rt-multi-thread"] }
-warp = "0.3.2"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1.20.4", features = ["rt-multi-thread"] }
+warp = "0.3.3"
 async-channel = "1.6.1"
 tera = "1"
