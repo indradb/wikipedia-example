@@ -19,7 +19,7 @@ indradb-lib = { path = "indradb/lib" }
 indradb-proto = { path = "indradb/proto" }
 libc = "0.2.107"
 clap = "2"
-bzip2 = "0.4.3"
+bzip2 = "0.4.4"
 quick-xml = "0.22.0"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
